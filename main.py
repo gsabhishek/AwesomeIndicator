@@ -12,7 +12,13 @@ from streamlit_autorefresh import st_autorefresh
 API_KEY = st.secrets["API_KEY"]
 API_SECRET = st.secrets["API_SECRET"]
 
+# refresh every 10 sec
+st_autorefresh(interval=10000)
+
+kite = KiteConnect(api_key=API_KEY)
+
 # ================= SESSION STATE =================
+
 state = st.session_state
 
 if "initialized" not in state:
@@ -20,22 +26,12 @@ if "initialized" not in state:
     state.df = None
     state.last_candle = None
     state.trades = []
-    state.skip_update = False
-    state.current_candle = None
-    state.current_minute = None
     state.token = None
     state.initialized = True
 
-st_autorefresh(interval=10000)
-
-kite = KiteConnect(api_key=API_KEY)
-
 # ================= LOGIN =================
 
-try:
-    request_token = st.query_params.get("request_token")
-except Exception:
-    request_token = None
+request_token = st.query_params.get("request_token")
 
 if request_token:
     data = kite.generate_session(request_token, api_secret=API_SECRET)
@@ -56,27 +52,13 @@ def load_instruments():
     return inst[(inst.name == "NIFTY") & (inst.segment == "NFO-OPT")]
 
 def get_quote():
-    try:
-        return kite.quote(["NSE:NIFTY 50"])["NSE:NIFTY 50"]["last_price"]
-    except:
-        st.warning("Quote fetch failed. Retrying...")
-        st.stop()
-
-def get_option_price(symbol):
-    try:
-        q = kite.quote([f"NFO:{symbol}"])
-        return q[f"NFO:{symbol}"]["last_price"]
-    except:
-        st.warning("Option price fetch failed.")
-        st.stop()
+    return kite.quote(["NSE:NIFTY 50"])["NSE:NIFTY 50"]["last_price"]
 
 # ================= INDICATORS =================
 
 def jurik_ma(series, length=8):
-
     beta = 0.45 * (length - 1) / (0.45 * (length - 1) + 2)
     alpha = beta ** 2
-
     jma = series.copy()
 
     for i in range(1, len(series)):
@@ -86,12 +68,9 @@ def jurik_ma(series, length=8):
 
 
 def wavetrend(df):
-
     ap = (df["high"] + df["low"] + df["close"]) / 3
-
     esa = ap.ewm(span=10).mean()
     d = (ap - esa).abs().ewm(span=10).mean()
-
     ci = (ap - esa) / (0.015 * d)
 
     wt1 = ci.ewm(span=21).mean()
@@ -101,13 +80,9 @@ def wavetrend(df):
 
 
 def squeeze_momentum(df):
-
-    length = 20
-    m_avg = df["close"].rolling(length).mean()
-
-    squeeze_on = False
+    m_avg = df["close"].rolling(20).mean()
     momentum = df["close"] - m_avg
-
+    squeeze_on = False
     return squeeze_on, momentum
 
 
@@ -115,6 +90,7 @@ class StrategyLogic:
 
     @staticmethod
     def compute(df):
+
         df = df.copy()
 
         df["jma_fast"] = jurik_ma(df["close"], 8)
@@ -140,7 +116,8 @@ class StrategyLogic:
 
         return df
 
-# ================= ATM OPTION =================
+
+# ================= OPTION SELECT =================
 def get_option():
 
     if "nifty_options" not in state:
@@ -155,22 +132,35 @@ def get_option():
     ce_options = inst[
         (inst.expiry == expiry) &
         (inst.instrument_type == "CE")
-    ].sort_values("strike")
+    ].copy()
 
-    # create dropdown labels
-    ce_options["label"] = (
-        ce_options["strike"].astype(int).astype(str)
-        + " CE"
-    )
+    # get nifty spot
+    spot = get_quote()
+
+    # ATM strike
+    atm = round(spot / 50) * 50
+
+    # keep ATM ± 5 strikes
+    ce_options = ce_options[
+        (ce_options.strike >= atm - 250) &
+        (ce_options.strike <= atm + 250)
+    ]
+
+    ce_options = ce_options.sort_values("strike")
+
+    ce_options["label"] = ce_options["strike"].astype(int).astype(str) + " CE"
 
     selected = st.selectbox(
         "Select NIFTY Call Option",
-        ce_options["label"]
+        ce_options["label"],
+        index=len(ce_options)//2   # ATM default
     )
 
     row = ce_options[ce_options["label"] == selected].iloc[0]
 
     return row
+
+# ================= DATA =================
 
 def fetch_latest_candle(token):
 
@@ -186,12 +176,13 @@ def fetch_latest_candle(token):
 
     df = pd.DataFrame(data)
 
-    if "date" not in df.columns and "datetime" in df.columns:
-        df.rename(columns={"datetime":"date"}, inplace=True)
+    if "datetime" in df.columns:
+        df.rename(columns={"datetime": "date"}, inplace=True)
 
-    df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(None)
+    df["date"] = pd.to_datetime(df["date"], utc=True).dt.tz_convert(None)
 
     return df.iloc[-1]
+
 
 def load_data(token):
 
@@ -202,20 +193,19 @@ def load_data(token):
         "minute"
     )
 
-    if not data:
-        st.error("No historical data returned from Kite.")
-        st.stop()
-
     df = pd.DataFrame(data)
-    if "date" not in df.columns and "datetime" in df.columns:
+
+    if "datetime" in df.columns:
         df.rename(columns={"datetime": "date"}, inplace=True)
 
-    # FIX: Convert to datetime AND strip timezone info
-    df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(None)
+    df["date"] = pd.to_datetime(df["date"], utc=True).dt.tz_convert(None)
 
     df = StrategyLogic.compute(df)
+
     state.df = df.tail(200).reset_index(drop=True)
+
     state.last_candle = state.df.iloc[-1]["date"]
+
 
 # ================= UI =================
 
@@ -225,80 +215,41 @@ opt = get_option()
 
 token = opt.instrument_token
 symbol = opt.tradingsymbol
-price = get_quote() if 'price' not in state else get_quote()
 
 st.write("Selected Option:", symbol)
+
+price = get_quote()
+
 # ================= TOKEN SWITCH =================
 
 if state.token != token:
-
     state.df = None
     state.last_candle = None
-    state.current_candle = None
-    state.current_minute = None
     state.token = token
 
 # ================= LOAD DATA =================
 
 if state.df is None:
     load_data(token)
-    state.current_minute = pd.to_datetime(state.df.iloc[-1]["date"]).replace(second=0, microsecond=0)
 
-# ================= BUILD LIVE CANDLE =================
+# ================= UPDATE CANDLE =================
 
 latest = fetch_latest_candle(token)
 
-if latest is not None:
+if latest is not None and state.last_candle != latest["date"]:
 
-    if state.last_candle != latest["date"]:
+    new_row = pd.DataFrame([latest])
 
-        new_row = pd.DataFrame([latest])
+    state.df = pd.concat([state.df, new_row]).tail(200)
 
-        state.df = pd.concat([state.df, new_row]).tail(200)
+    state.df = StrategyLogic.compute(state.df)
 
-        state.df = StrategyLogic.compute(state.df)
-
-        state.last_candle = latest["date"]
+    state.last_candle = latest["date"]
 
 option_price = latest["close"] if latest is not None else price
 
-# ================= TRADE BUTTONS =================
-
-c1, c2 = st.columns(2)
-
-entry_click = c1.button("ENTRY")
-exit_click = c2.button("EXIT")
-
-if entry_click:
-
-    state.skip_update = True
-
-    if not state.trades or state.trades[-1]["Status"] == "Closed":
-
-        state.trades.append(
-            {
-                "Entry Time": datetime.now(),
-                "Entry Price": option_price,
-                "Status": "Open",
-            }
-        )
-
-if exit_click:
-
-    state.skip_update = True
-
-    if state.trades and state.trades[-1]["Status"] == "Open":
-
-        t = state.trades[-1]
-
-        t["Exit Time"] = datetime.now()
-        t["Exit Price"] = option_price
-        t["Status"] = "Closed"
-        t["P/L"] = t["Exit Price"] - t["Entry Price"]
-
-# ================= DATA UPDATE =================
-
 df = state.df
+
 # ================= DASHBOARD =================
 
 sec = max(1, 60 - datetime.now().second)
@@ -315,6 +266,7 @@ col2.metric("Option", round(option_price, 2))
 if df is None or len(df) < 30:
     st.warning("Indicators warming up...")
     st.stop()
+
 signal = df.iloc[-2]
 entry = df.iloc[-1]
 
@@ -361,7 +313,7 @@ if all(conditions):
 else:
     st.warning("WAIT")
 
-# ================= INDICATOR VALUES =================
+# ================= INDICATORS =================
 
 st.subheader("Indicator Values")
 
@@ -376,26 +328,13 @@ vals = {
     "WT2": round(entry.wt2, 2),
     "Momentum": round(entry.momentum, 2),
     "EMA9": round(entry.ema9, 2),
-    "EMA21": round(entry.ema21, 2),
+    "EMA21": round(entry.ema21, 2)
 
 }
 
 st.json(vals)
 
-# ================= LIVE CANDLE =================
-
-if state.current_candle:
-
-    st.subheader("Live Candle")
-
-    st.write({
-        "Open": state.current_candle["open"],
-        "High": state.current_candle["high"],
-        "Low": state.current_candle["low"],
-        "Close": state.current_candle["close"]
-    })
-
-# ================= TRADE LOG =================
+# ================= TRADES =================
 
 if state.trades:
 
@@ -405,8 +344,4 @@ if state.trades:
 
     st.dataframe(tdf, use_container_width=True)
 
-    st.download_button(
-        "Download",
-        tdf.to_csv(index=False),
-        "trades.csv"
-    )
+    st.download_button("Download", tdf.to_csv(index=False), "trades.csv")
