@@ -1,4 +1,6 @@
 import streamlit as st
+st.set_page_config(page_title="NIFTY Strategy", layout="wide")
+
 import pandas as pd
 from kiteconnect import KiteConnect
 from datetime import datetime, timedelta
@@ -11,8 +13,6 @@ API_KEY = st.secrets["API_KEY"]
 API_SECRET = st.secrets["API_SECRET"]
 
 # ================= SESSION STATE =================
-st.set_page_config(page_title="NIFTY Strategy", layout="wide")
-
 state = st.session_state
 
 if "initialized" not in state:
@@ -32,9 +32,10 @@ kite = KiteConnect(api_key=API_KEY)
 
 # ================= LOGIN =================
 
-params = st.query_params
-
-request_token = params.get("request_token")
+try:
+    request_token = st.query_params.get("request_token")
+except Exception:
+    request_token = None
 
 if request_token:
     data = kite.generate_session(request_token, api_secret=API_SECRET)
@@ -168,8 +169,44 @@ def get_option():
     return opt.iloc[0], price
 
 # ================= DATA =================
-
 def update_local_candle(price):
+    now = datetime.now()
+    # Floor the time to the start of the minute (e.g., 10:05:45 -> 10:05:00)
+    minute_timestamp = now.replace(second=0, microsecond=0)
+
+    # 1. INITIALIZE: If this is the very first tick of the session
+    if state.current_minute is None:
+        state.current_minute = minute_timestamp
+        state.current_candle = {
+            "date": minute_timestamp,
+            "open": price, "high": price, "low": price, "close": price, "volume": 0
+        }
+        return
+
+    # 2. NEW MINUTE DETECTED: Close the previous candle and move it to history
+    if minute_timestamp > state.current_minute:
+        # Convert the finished live candle to a DataFrame row
+        completed_candle = pd.DataFrame([state.current_candle])
+        
+        # Append to main history and maintain the 200-period window
+        state.df = pd.concat([state.df, completed_candle], ignore_index=True).tail(200)
+        
+        # RECALCULATE INDICATORS: Only happens once per minute now (saves CPU)
+        state.df = StrategyLogic.compute(state.df)
+        
+        # Reset for the new minute
+        state.current_minute = minute_timestamp
+        state.current_candle = {
+            "date": minute_timestamp,
+            "open": price, "high": price, "low": price, "close": price, "volume": 0
+        }
+    
+    # 3. UPDATE CURRENT TICK: Standard OHLC update for the active minute
+    else:
+        state.current_candle["high"] = max(state.current_candle["high"], price)
+        state.current_candle["low"] = min(state.current_candle["low"], price)
+        state.current_candle["close"] = price
+def update_local_candle1(price):
 
     now = datetime.now()
     minute = now.replace(second=0, microsecond=0)
@@ -396,6 +433,19 @@ vals = {
 
 st.json(vals)
 
+# ================= LIVE CANDLE =================
+
+if state.current_candle:
+
+    st.subheader("Live Candle")
+
+    st.write({
+        "Open": state.current_candle["open"],
+        "High": state.current_candle["high"],
+        "Low": state.current_candle["low"],
+        "Close": state.current_candle["close"]
+    })
+
 # ================= TRADE LOG =================
 
 if state.trades:
@@ -411,16 +461,3 @@ if state.trades:
         tdf.to_csv(index=False),
         "trades.csv"
     )
-
-# ================= LIVE CANDLE =================
-
-if state.current_candle:
-
-    st.subheader("Live Candle")
-
-    st.write({
-        "Open": state.current_candle["open"],
-        "High": state.current_candle["high"],
-        "Low": state.current_candle["low"],
-        "Close": state.current_candle["close"]
-    })
