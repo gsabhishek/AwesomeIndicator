@@ -1,6 +1,9 @@
 import streamlit as st
 st.set_page_config(page_title="NIFTY Strategy", layout="wide")
 
+import pytz
+IST = pytz.timezone("Asia/Kolkata")
+
 import pandas as pd
 from kiteconnect import KiteConnect
 from datetime import datetime, timedelta
@@ -166,8 +169,8 @@ def fetch_latest_candle(token):
 
     data = kite.historical_data(
         token,
-        datetime.now() - timedelta(minutes=2),
-        datetime.now(),
+        datetime.now(IST) - timedelta(minutes=2),
+        datetime.now(IST),
         "minute"
     )
 
@@ -188,8 +191,8 @@ def load_data(token):
 
     data = kite.historical_data(
         token,
-        datetime.now() - timedelta(days=1),
-        datetime.now(),
+        datetime.now(IST) - timedelta(days=1),
+        datetime.now(IST),
         "minute"
     )
 
@@ -252,7 +255,7 @@ df = state.df
 
 # ================= DASHBOARD =================
 
-sec = max(1, 60 - datetime.now().second)
+sec = max(1, 60 - datetime.now(IST).second)
 
 st.info(f"Next candle in {sec}s")
 
