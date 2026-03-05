@@ -12,7 +12,7 @@ API_SECRET = st.secrets["API_SECRET"]
 
 st.set_page_config(page_title="NIFTY Strategy Dashboard", layout="wide")
 
-st_autorefresh(interval=1000, key="refresh")
+st_autorefresh(interval=10*1000, key="refresh")
 
 # ================= SESSION STATE =================
 
