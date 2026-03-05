@@ -357,14 +357,14 @@ entry = df.iloc[-1]
 
 conditions = [
 
-    entry.close > entry.ma_chan_high,
-    signal.ema9 < signal.ema21 and entry.ema9 > entry.ema21,
-    entry.jma_fast > entry.jma_slow,
-    signal.rsi < 60 and entry.rsi > 60,
-    entry.di_plus > 20,
-    entry.adx > 50 and entry.adx > signal.adx,
-    entry.momentum > 0,
-    signal.wt1 < signal.wt2 and entry.wt1 > entry.wt2
+    entry.close > entry.ma_chan_high, #Price above MA Channel
+    signal.ema9 < signal.ema21 and entry.ema9 > entry.ema21, #EMA Bullish Crossover
+    entry.jma_fast > entry.jma_slow, #Jurik Trend Bullish
+    signal.rsi < 50 and entry.rsi > 50, #RSI Crossing 50
+    entry.di_plus > 20, #DMI Strength
+    entry.adx > 50 and entry.adx > signal.adx, #ADX Strengthening
+    entry.momentum > 0, #Squeeze Momentum Positive
+    signal.wt1 < signal.wt2 and entry.wt1 > entry.wt2 #WaveTrend Bullish Crossover
 ]
 
 names = [
