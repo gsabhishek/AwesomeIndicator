@@ -1,0 +1,8 @@
+streamlit==1.33.0
+streamlit-autorefresh
+altair==4.2.2
+kiteconnect
+pandas
+numpy
+ta
+schedule
