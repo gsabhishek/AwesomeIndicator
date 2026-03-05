@@ -285,9 +285,9 @@ if state.df is None:
 
 latest = fetch_latest_candle(token)
 
-if latest is None:
-    st.warning("Waiting for candle data...")
-    st.stop()
+# if latest is None:
+#     st.warning("Waiting for candle data...")
+#     st.stop()
 
 if latest is not None and state.last_candle != latest["date"]:
 
