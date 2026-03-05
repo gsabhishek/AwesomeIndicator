@@ -12,7 +12,7 @@ API_SECRET = st.secrets["API_SECRET"]
 
 st.set_page_config(page_title="NIFTY Strategy Dashboard", layout="wide")
 
-st_autorefresh(interval=10*1000, key="refresh")
+st_autorefresh(interval=2000, key="refresh")
 
 # ================= SESSION STATE =================
 
@@ -155,12 +155,7 @@ def get_atm_option():
 
     strike = round(nifty_price / 50) * 50
 
-    inst = get_instruments()
-
-    nifty = inst[
-        (inst["name"] == "NIFTY") &
-        (inst["segment"] == "NFO-OPT")
-    ]
+    nifty = st.session_state.nifty_options
 
     expiry = sorted(nifty["expiry"].unique())[0]
 
@@ -220,9 +215,9 @@ def update_if_new_candle(token):
 
         new_row = latest_df.iloc[-1:]
 
-        df = pd.concat([st.session_state.market_data, new_row]).tail(300)
+        df = pd.concat([st.session_state.market_data, new_row]).drop_duplicates("date").tail(300)
 
-        df = StrategyLogic.compute(df)
+        df = StrategyLogic.compute(df.tail(200))
 
         st.session_state.market_data = df
 
@@ -375,24 +370,32 @@ st.metric("Option Price", round(price,2))
 
 col1, col2 = st.columns(2)
 
-if col1.button("ENTRY"):
-    st.session_state.trades.append({
-        "Entry Time": entry.date,
-        "Entry Price": entry.close,
-        "Status":"Open"
-    })
+if col1.button("ENTRY", use_container_width=True):
 
-if col2.button("EXIT"):
+    if not st.session_state.trades or st.session_state.trades[-1]["Status"]=="Closed":
+
+        st.session_state.trades.append({
+            "Entry Time": entry.date,
+            "Entry Price": float(entry.close),
+            "Status":"Open"
+        })
+
+        st.toast("Entry recorded")
+
+
+if col2.button("EXIT", use_container_width=True):
 
     if st.session_state.trades and st.session_state.trades[-1]["Status"]=="Open":
 
-        st.session_state.trades[-1].update({
-            "Exit Time": entry.date,
-            "Exit Price": entry.low,
-            "Status":"Closed",
-            "P/L": entry.low - st.session_state.trades[-1]["Entry Price"]
-        })
+        trade = st.session_state.trades[-1]
 
+        trade["Exit Time"] = entry.date
+        trade["Exit Price"] = float(entry.close)
+        trade["Status"] = "Closed"
+        trade["P/L"] = trade["Exit Price"] - trade["Entry Price"]
+
+        st.toast("Exit recorded")
+        
 if st.session_state.trades:
 
     st.subheader("Trade Log")
