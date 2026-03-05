@@ -10,29 +10,25 @@ from streamlit_autorefresh import st_autorefresh
 API_KEY = st.secrets["API_KEY"]
 API_SECRET = st.secrets["API_SECRET"]
 
+# ================= SESSION STATE =================
 st.set_page_config(page_title="NIFTY Strategy", layout="wide")
+
+state = st.session_state
+
+if "initialized" not in state:
+    state.access_token = None
+    state.df = None
+    state.last_candle = None
+    state.trades = []
+    state.skip_update = False
+    state.current_candle = None
+    state.current_minute = None
+    state.token = None
+    state.initialized = True
 
 st_autorefresh(interval=4000)
 
 kite = KiteConnect(api_key=API_KEY)
-
-# ================= SESSION STATE =================
-
-state = st.session_state
-
-defaults = {
-    "access_token": None,
-    "df": None,
-    "last_candle": None,
-    "trades": [],
-    "skip_update": False,
-    "current_candle": None,
-    "current_minute": None,
-    "token": None
-}
-
-for k, v in defaults.items():
-    state.setdefault(k, v)
 
 # ================= LOGIN =================
 
@@ -59,11 +55,19 @@ def load_instruments():
     return inst[(inst.name == "NIFTY") & (inst.segment == "NFO-OPT")]
 
 def get_quote():
-    return kite.quote(["NSE:NIFTY 50"])["NSE:NIFTY 50"]["last_price"]
+    try:
+        return kite.quote(["NSE:NIFTY 50"])["NSE:NIFTY 50"]["last_price"]
+    except:
+        st.warning("Quote fetch failed. Retrying...")
+        st.stop()
 
 def get_option_price(symbol):
-    q = kite.quote([f"NFO:{symbol}"])
-    return q[f"NFO:{symbol}"]["last_price"]
+    try:
+        q = kite.quote([f"NFO:{symbol}"])
+        return q[f"NFO:{symbol}"]["last_price"]
+    except:
+        st.warning("Option price fetch failed.")
+        st.stop()
 
 # ================= INDICATORS =================
 
@@ -110,6 +114,7 @@ class StrategyLogic:
 
     @staticmethod
     def compute(df):
+        df = df.copy()
 
         df["jma_fast"] = jurik_ma(df["close"], 8)
         df["jma_slow"] = jurik_ma(df["close"], 12)
@@ -300,11 +305,17 @@ if state.current_candle is not None:
 
     df = pd.concat([df, live_row]).tail(200)
 
-    df = StrategyLogic.compute(df)
+    if state.current_candle is not None:
+
+        live_row = pd.DataFrame([state.current_candle])
+
+        df = pd.concat([state.df, live_row]).tail(200)
+
+        df = StrategyLogic.compute(df)
 
 # ================= DASHBOARD =================
 
-sec = 60 - datetime.now().second
+sec = max(1, 60 - datetime.now().second)
 
 st.info(f"Next candle in {sec}s")
 
@@ -315,6 +326,9 @@ col2.metric("Option", round(option_price, 2))
 
 # ================= SIGNAL =================
 
+if len(df) < 2:
+    st.warning("Waiting for enough candle data...")
+    st.stop()
 signal = df.iloc[-2]
 entry = df.iloc[-1]
 
