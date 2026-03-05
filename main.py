@@ -310,10 +310,13 @@ c1, c2 = st.columns(2)
 
 if c1.button("ENTRY"):
 
+    if latest is None:
+        st.warning("No candle data yet. Try again.")
+        st.stop()
+
     if not state.trades or state.trades[-1]["Status"] == "Closed":
 
-        # Prevent duplicate trade in same candle
-        if state.last_trade_candle and latest["date"].minute == state.last_trade_candle.minute:
+        if state.last_trade_candle == latest["date"]:
             st.warning("Trade already taken this candle")
             st.stop()
 
