@@ -206,13 +206,23 @@ def load_data(token):
         "minute"
     )
 
+    if not data:
+        st.error("No historical data returned from Kite.")
+        st.stop()
+
     df = pd.DataFrame(data)
+
+    # Ensure datetime column exists
+    if "date" not in df.columns and "datetime" in df.columns:
+        df.rename(columns={"datetime": "date"}, inplace=True)
+
+    df["date"] = pd.to_datetime(df["date"])
 
     df = StrategyLogic.compute(df)
 
-    state.df = df.tail(200)
+    state.df = df.tail(200).reset_index(drop=True)
 
-    state.last_candle = df.iloc[-1]["date"]
+    state.last_candle = state.df.iloc[-1]["date"]
 
 # ================= UI =================
 
@@ -240,7 +250,7 @@ if state.df is None:
 
     load_data(token)
 
-    state.current_minute = state.df.iloc[-1]["date"].replace(second=0, microsecond=0)
+    state.current_minute = pd.to_datetime(state.df.iloc[-1]["date"]).replace(second=0, microsecond=0)
 
 # ================= BUILD LIVE CANDLE =================
 
