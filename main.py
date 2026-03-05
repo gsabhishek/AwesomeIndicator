@@ -13,7 +13,7 @@ NIFTY_TOKEN = 256265
 
 st.set_page_config(page_title="NIFTY Strategy Dashboard", layout="wide")
 
-st_autorefresh(interval=60 * 1000, key="refresh")
+st_autorefresh(interval=1000, key="refresh")
 
 # ================= SESSION STATE =================
 if "trades" not in st.session_state:
@@ -48,12 +48,7 @@ def get_instruments():
 
 @st.cache_data(ttl=50)
 def get_data(token, start, end):
-    return kite.historical_data(
-        token,
-        start,
-        end,
-        "minute"
-    )
+    return kite.historical_data(token, start, end, "minute")
 
 # ================= INDICATORS =================
 def jurik_ma(series, length=8):
@@ -250,10 +245,11 @@ if mode == "Backtest":
 # ================= LIVE MODE =================
 st.title("🚀 NIFTY Strategy Dashboard")
 
-now = datetime.now()
-seconds_left = (60 - now.second) % 60
+last_candle_time = df.iloc[-1]["date"]
+seconds_left = 60 - last_candle_time.second
 
 st.info(f"⏱ Next candle refresh in **{seconds_left} seconds**")
+st.caption(f"Last candle time: {last_candle_time.strftime('%H:%M:%S')}")
 
 option, nifty_price = get_atm_option()
 
@@ -280,7 +276,7 @@ if df.empty:
 if len(df) < 3:
     st.warning("Waiting for candles...")
     st.stop()
-    
+
 signal = df.iloc[-2]
 entry = df.iloc[-1]
 
@@ -357,4 +353,4 @@ if st.session_state.trades:
     )
 
 # ================= LAST UPDATED =================
-st.caption(f"Last updated: {datetime.now().strftime('%H:%M:%S')}")
+st.caption(f"Last candle time: {df.iloc[-1]['date'].strftime('%H:%M:%S')}")
