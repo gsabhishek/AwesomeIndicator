@@ -202,9 +202,19 @@ def update_if_new_candle(token):
         "minute"
     )
 
+    if not latest:
+        return
+
     latest_df = pd.DataFrame(latest)
 
+    if latest_df.empty:
+        return
+
     new_time = latest_df.iloc[-1]["date"]
+
+    if st.session_state.last_candle_time is None:
+        st.session_state.last_candle_time = new_time
+        return
 
     if new_time > st.session_state.last_candle_time:
 
@@ -217,7 +227,6 @@ def update_if_new_candle(token):
         st.session_state.market_data = df
 
         st.session_state.last_candle_time = new_time
-
 
 # ================= BACKTEST =================
 
