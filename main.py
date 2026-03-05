@@ -390,6 +390,25 @@ if all(conditions):
 else:
     st.warning("WAIT")
 
+# ================= INDICATORS =================
+
+st.subheader("Indicator Values")
+
+vals = {
+    "EMA9            ": round(entry.ema9, 2),
+    "EMA21           ": round(entry.ema21, 2),
+    "JuricMA Fast.   ": round(entry.jma_fast, 2),
+    "JuricMA Slow.   ": round(entry.jma_slow, 2),
+    "RSI             ": round(entry.rsi, 2),
+    "ADX             ": round(entry.adx, 2),
+    "DI+             ": round(entry.di_plus, 2),
+    "WaveTrend 1     ": round(entry.wt1, 2),
+    "WaveTrend 2     ": round(entry.wt2, 2),
+    "SqueezeMomentum ": round(entry.momentum, 2),
+}
+
+st.json(vals)
+
 # ================= TRADE LOG =================
 
 if state.trades:
