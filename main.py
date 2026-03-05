@@ -141,12 +141,7 @@ class StrategyLogic:
         return df
 
 # ================= ATM OPTION =================
-
 def get_option():
-
-    price = get_quote()
-
-    strike = round(price / 50) * 50
 
     if "nifty_options" not in state:
         inst = load_instruments()
@@ -154,19 +149,28 @@ def get_option():
 
     inst = state.nifty_options
 
+    # nearest expiry
     expiry = sorted(inst.expiry.unique())[0]
 
-    opt = inst[
-        (inst.expiry == expiry)
-        & (inst.strike == strike)
-        & (inst.instrument_type == "CE")
-    ]
+    ce_options = inst[
+        (inst.expiry == expiry) &
+        (inst.instrument_type == "CE")
+    ].sort_values("strike")
 
-    if opt.empty:
-        st.error("Option not found")
-        st.stop()
+    # create dropdown labels
+    ce_options["label"] = (
+        ce_options["strike"].astype(int).astype(str)
+        + " CE"
+    )
 
-    return opt.iloc[0], price
+    selected = st.selectbox(
+        "Select NIFTY Call Option",
+        ce_options["label"]
+    )
+
+    row = ce_options[ce_options["label"] == selected].iloc[0]
+
+    return row
 
 def fetch_latest_candle(token):
 
@@ -217,10 +221,13 @@ def load_data(token):
 
 st.title("NIFTY Strategy Dashboard")
 
-opt, price = get_option()
+opt = get_option()
 
 token = opt.instrument_token
+symbol = opt.tradingsymbol
+price = get_quote() if 'price' not in state else get_quote()
 
+st.write("Selected Option:", symbol)
 # ================= TOKEN SWITCH =================
 
 if state.token != token:
@@ -234,9 +241,7 @@ if state.token != token:
 # ================= LOAD DATA =================
 
 if state.df is None:
-
     load_data(token)
-
     state.current_minute = pd.to_datetime(state.df.iloc[-1]["date"]).replace(second=0, microsecond=0)
 
 # ================= BUILD LIVE CANDLE =================
