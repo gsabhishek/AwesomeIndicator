@@ -2,20 +2,26 @@ import streamlit as st
 st.set_page_config(page_title="NIFTY Strategy", layout="wide")
 
 import pytz
-IST = pytz.timezone("Asia/Kolkata")
-
 import pandas as pd
 from kiteconnect import KiteConnect
 from datetime import datetime, timedelta
 import ta
 from streamlit_autorefresh import st_autorefresh
+import os
+import logging
+
+IST = pytz.timezone("Asia/Kolkata")
+
+logging.basicConfig(level=logging.INFO)
 
 # ================= CONFIG =================
 
 API_KEY = st.secrets["API_KEY"]
 API_SECRET = st.secrets["API_SECRET"]
 
-# refresh every 10 sec
+TOKEN_FILE = "token.txt"
+TRADES_FILE = "trades.csv"
+
 st_autorefresh(interval=10000)
 
 kite = KiteConnect(api_key=API_KEY)
@@ -32,6 +38,11 @@ if "initialized" not in state:
     state.token = None
     state.initialized = True
 
+# ================= TOKEN LOAD =================
+
+if os.path.exists(TOKEN_FILE) and state.access_token is None:
+    state.access_token = open(TOKEN_FILE).read().strip()
+
 # ================= LOGIN =================
 
 request_token = st.query_params.get("request_token")
@@ -39,6 +50,10 @@ request_token = st.query_params.get("request_token")
 if request_token:
     data = kite.generate_session(request_token, api_secret=API_SECRET)
     state.access_token = data["access_token"]
+
+    with open(TOKEN_FILE, "w") as f:
+        f.write(state.access_token)
+
     st.query_params.clear()
 
 if not state.access_token:
@@ -47,21 +62,50 @@ if not state.access_token:
 
 kite.set_access_token(state.access_token)
 
+# ================= TOKEN VALIDATION =================
+
+def is_token_valid():
+    try:
+        kite.profile()
+        return True
+    except:
+        return False
+
+if not is_token_valid():
+    st.warning("Session expired. Login again.")
+    os.remove(TOKEN_FILE)
+    st.stop()
+
+# ================= SAFE API =================
+
+def safe_call(func):
+    try:
+        return func()
+    except Exception as e:
+        logging.error(e)
+        st.warning("API issue. Retrying...")
+        return None
+
 # ================= CACHE =================
 
 @st.cache_data(ttl=86400)
 def load_instruments():
-    inst = pd.DataFrame(kite.instruments("NFO"))
+    inst = safe_call(lambda: pd.DataFrame(kite.instruments("NFO")))
     return inst[(inst.name == "NIFTY") & (inst.segment == "NFO-OPT")]
 
 def get_quote():
-    return kite.quote(["NSE:NIFTY 50"])["NSE:NIFTY 50"]["last_price"]
+    data = safe_call(lambda: kite.quote(["NSE:NIFTY 50"]))
+    if data:
+        return data["NSE:NIFTY 50"]["last_price"]
+    return 0
 
 # ================= INDICATORS =================
 
 def jurik_ma(series, length=8):
+
     beta = 0.45 * (length - 1) / (0.45 * (length - 1) + 2)
     alpha = beta ** 2
+
     jma = series.copy()
 
     for i in range(1, len(series)):
@@ -71,9 +115,12 @@ def jurik_ma(series, length=8):
 
 
 def wavetrend(df):
+
     ap = (df["high"] + df["low"] + df["close"]) / 3
+
     esa = ap.ewm(span=10).mean()
     d = (ap - esa).abs().ewm(span=10).mean()
+
     ci = (ap - esa) / (0.015 * d)
 
     wt1 = ci.ewm(span=21).mean()
@@ -83,9 +130,13 @@ def wavetrend(df):
 
 
 def squeeze_momentum(df):
+
     m_avg = df["close"].rolling(20).mean()
+
     momentum = df["close"] - m_avg
+
     squeeze_on = False
+
     return squeeze_on, momentum
 
 
@@ -119,17 +170,15 @@ class StrategyLogic:
 
         return df
 
-
 # ================= OPTION SELECT =================
+
 def get_option():
 
     if "nifty_options" not in state:
-        inst = load_instruments()
-        state.nifty_options = inst
+        state.nifty_options = load_instruments()
 
     inst = state.nifty_options
 
-    # nearest expiry
     expiry = sorted(inst.expiry.unique())[0]
 
     ce_options = inst[
@@ -137,13 +186,10 @@ def get_option():
         (inst.instrument_type == "CE")
     ].copy()
 
-    # get nifty spot
     spot = get_quote()
 
-    # ATM strike
     atm = round(spot / 50) * 50
 
-    # keep ATM ± 5 strikes
     ce_options = ce_options[
         (ce_options.strike >= atm - 250) &
         (ce_options.strike <= atm + 250)
@@ -156,7 +202,7 @@ def get_option():
     selected = st.selectbox(
         "Select NIFTY Call Option",
         ce_options["label"],
-        index=len(ce_options)//2   # ATM default
+        index=len(ce_options)//2
     )
 
     row = ce_options[ce_options["label"] == selected].iloc[0]
@@ -167,12 +213,12 @@ def get_option():
 
 def fetch_latest_candle(token):
 
-    data = kite.historical_data(
+    data = safe_call(lambda: kite.historical_data(
         token,
         datetime.now(IST) - timedelta(minutes=2),
         datetime.now(IST),
         "minute"
-    )
+    ))
 
     if not data:
         return None
@@ -189,12 +235,12 @@ def fetch_latest_candle(token):
 
 def load_data(token):
 
-    data = kite.historical_data(
+    data = safe_call(lambda: kite.historical_data(
         token,
         datetime.now(IST) - timedelta(days=1),
         datetime.now(IST),
         "minute"
-    )
+    ))
 
     df = pd.DataFrame(data)
 
@@ -208,7 +254,6 @@ def load_data(token):
     state.df = df.tail(200).reset_index(drop=True)
 
     state.last_candle = state.df.iloc[-1]["date"]
-
 
 # ================= UI =================
 
@@ -253,6 +298,43 @@ option_price = latest["close"] if latest is not None else price
 
 df = state.df
 
+# ================= LOAD PREVIOUS TRADES =================
+
+if os.path.exists(TRADES_FILE) and not state.trades:
+    state.trades = pd.read_csv(TRADES_FILE).to_dict("records")
+
+# ================= TRADE BUTTONS =================
+
+c1, c2 = st.columns(2)
+
+if c1.button("ENTRY"):
+
+    if not state.trades or state.trades[-1]["Status"] == "Closed":
+
+        trade = {
+            "Option": symbol,
+            "Entry Time": datetime.now(IST),
+            "Entry Price": option_price,
+            "Status": "Open"
+        }
+
+        state.trades.append(trade)
+
+        pd.DataFrame(state.trades).to_csv(TRADES_FILE, index=False)
+
+if c2.button("EXIT"):
+
+    if state.trades and state.trades[-1]["Status"] == "Open":
+
+        t = state.trades[-1]
+
+        t["Exit Time"] = datetime.now(IST)
+        t["Exit Price"] = option_price
+        t["Status"] = "Closed"
+        t["P/L"] = t["Exit Price"] - t["Entry Price"]
+
+        pd.DataFrame(state.trades).to_csv(TRADES_FILE, index=False)
+
 # ================= DASHBOARD =================
 
 sec = max(1, 60 - datetime.now(IST).second)
@@ -276,21 +358,13 @@ entry = df.iloc[-1]
 conditions = [
 
     entry.close > entry.ma_chan_high,
-
     signal.ema9 < signal.ema21 and entry.ema9 > entry.ema21,
-
     entry.jma_fast > entry.jma_slow,
-
     signal.rsi < 60 and entry.rsi > 60,
-
     entry.di_plus > 20,
-
     entry.adx > 50 and entry.adx > signal.adx,
-
     entry.momentum > 0,
-
     signal.wt1 < signal.wt2 and entry.wt1 > entry.wt2
-
 ]
 
 names = [
@@ -301,7 +375,7 @@ names = [
     "DMI Strength",
     "ADX Trend",
     "Squeeze Momentum",
-    "WaveTrend Cross",
+    "WaveTrend Cross"
 ]
 
 st.subheader("Checklist")
@@ -316,32 +390,11 @@ if all(conditions):
 else:
     st.warning("WAIT")
 
-# ================= INDICATORS =================
-
-st.subheader("Indicator Values")
-
-vals = {
-
-    "JMA Fast": round(entry.jma_fast, 2),
-    "JMA Slow": round(entry.jma_slow, 2),
-    "RSI": round(entry.rsi, 2),
-    "ADX": round(entry.adx, 2),
-    "DI+": round(entry.di_plus, 2),
-    "WT1": round(entry.wt1, 2),
-    "WT2": round(entry.wt2, 2),
-    "Momentum": round(entry.momentum, 2),
-    "EMA9": round(entry.ema9, 2),
-    "EMA21": round(entry.ema21, 2)
-
-}
-
-st.json(vals)
-
-# ================= TRADES =================
+# ================= TRADE LOG =================
 
 if state.trades:
 
-    st.subheader("Trades")
+    st.subheader("Trade Log")
 
     tdf = pd.DataFrame(state.trades)
 
