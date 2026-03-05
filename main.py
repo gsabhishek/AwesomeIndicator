@@ -6,25 +6,32 @@ import ta
 from streamlit_autorefresh import st_autorefresh
 
 # ================= CONFIG =================
+
 API_KEY = st.secrets["API_KEY"]
 API_SECRET = st.secrets["API_SECRET"]
-
-NIFTY_TOKEN = 256265
 
 st.set_page_config(page_title="NIFTY Strategy Dashboard", layout="wide")
 
 st_autorefresh(interval=1000, key="refresh")
 
 # ================= SESSION STATE =================
+
 if "trades" not in st.session_state:
     st.session_state.trades = []
 
 if "access_token" not in st.session_state:
     st.session_state.access_token = None
 
+if "market_data" not in st.session_state:
+    st.session_state.market_data = None
+
+if "last_candle_time" not in st.session_state:
+    st.session_state.last_candle_time = None
+
 kite = KiteConnect(api_key=API_KEY)
 
 # ================= LOGIN =================
+
 query_params = st.query_params
 
 if "request_token" in query_params:
@@ -39,18 +46,21 @@ if not st.session_state.access_token:
 kite.set_access_token(st.session_state.access_token)
 
 # ================= MODE =================
+
 mode = st.sidebar.radio("Mode", ["Live Trading", "Backtest"])
 
 # ================= CACHE =================
-@st.cache_data(ttl=3600)
+
+@st.cache_data(ttl=86400)
 def get_instruments():
     return pd.DataFrame(kite.instruments("NFO"))
 
-@st.cache_data(ttl=50)
-def get_data(token, start, end):
-    return kite.historical_data(token, start, end, "minute")
+@st.cache_data(ttl=5)
+def get_quote(symbol):
+    return kite.quote([symbol])
 
 # ================= INDICATORS =================
+
 def jurik_ma(series, length=8):
 
     beta = 0.45 * (length - 1) / (0.45 * (length - 1) + 2)
@@ -136,13 +146,10 @@ class StrategyLogic:
 
 
 # ================= ATM OPTION =================
+
 def get_atm_option():
 
-    quote = kite.quote(["NSE:NIFTY 50"])
-
-    if "NSE:NIFTY 50" not in quote:
-        st.error("NIFTY quote unavailable")
-        st.stop()
+    quote = get_quote("NSE:NIFTY 50")
 
     nifty_price = quote["NSE:NIFTY 50"]["last_price"]
 
@@ -163,14 +170,57 @@ def get_atm_option():
         (nifty["instrument_type"] == "CE")
     ]
 
-    if option.empty:
-        st.error("ATM option not found")
-        st.stop()
-
     return option.iloc[0], nifty_price
 
 
+# ================= DATA LOADER =================
+
+def load_initial_data(token):
+
+    data = kite.historical_data(
+        token,
+        datetime.today() - timedelta(days=1),
+        datetime.today(),
+        "minute"
+    )
+
+    df = pd.DataFrame(data)
+
+    df = StrategyLogic.compute(df)
+
+    st.session_state.market_data = df.tail(300)
+
+    st.session_state.last_candle_time = df.iloc[-1]["date"]
+
+
+def update_if_new_candle(token):
+
+    latest = kite.historical_data(
+        token,
+        datetime.today() - timedelta(minutes=2),
+        datetime.today(),
+        "minute"
+    )
+
+    latest_df = pd.DataFrame(latest)
+
+    new_time = latest_df.iloc[-1]["date"]
+
+    if new_time > st.session_state.last_candle_time:
+
+        new_row = latest_df.iloc[-1:]
+
+        df = pd.concat([st.session_state.market_data, new_row]).tail(300)
+
+        df = StrategyLogic.compute(df)
+
+        st.session_state.market_data = df
+
+        st.session_state.last_candle_time = new_time
+
+
 # ================= BACKTEST =================
+
 def run_backtest(df):
 
     trades = []
@@ -205,6 +255,7 @@ def run_backtest(df):
 
 
 # ================= BACKTEST MODE =================
+
 if mode == "Backtest":
 
     st.title("📊 Backtest")
@@ -213,10 +264,12 @@ if mode == "Backtest":
 
     token = option.instrument_token
 
-    end = datetime.now()
-    start = end - timedelta(hours=6)
-
-    data = get_data(token, start, end)
+    data = kite.historical_data(
+        token,
+        datetime.today() - timedelta(days=1),
+        datetime.today(),
+        "minute"
+    )
 
     df = pd.DataFrame(data)
 
@@ -243,7 +296,19 @@ if mode == "Backtest":
 
 
 # ================= LIVE MODE =================
+
 st.title("🚀 NIFTY Strategy Dashboard")
+
+option, nifty_price = get_atm_option()
+
+token = option.instrument_token
+
+if st.session_state.market_data is None:
+    load_initial_data(token)
+else:
+    update_if_new_candle(token)
+
+df = st.session_state.market_data
 
 last_candle_time = df.iloc[-1]["date"]
 seconds_left = 60 - last_candle_time.second
@@ -251,31 +316,10 @@ seconds_left = 60 - last_candle_time.second
 st.info(f"⏱ Next candle refresh in **{seconds_left} seconds**")
 st.caption(f"Last candle time: {last_candle_time.strftime('%H:%M:%S')}")
 
-option, nifty_price = get_atm_option()
-
-symbol = option.tradingsymbol
-token = option.instrument_token
-
 col1, col2 = st.columns(2)
 
 col1.metric("NIFTY", round(nifty_price,2))
-col2.metric("ATM Option", symbol)
-
-end = datetime.now()
-start = end - timedelta(hours=6)
-
-data = get_data(token, start, end)
-df = pd.DataFrame(data)
-
-df = StrategyLogic.compute(df)
-
-if df.empty:
-    st.warning("No data received")
-    st.stop()
-
-if len(df) < 3:
-    st.warning("Waiting for candles...")
-    st.stop()
+col2.metric("ATM Option", option.tradingsymbol)
 
 signal = df.iloc[-2]
 entry = df.iloc[-1]
@@ -319,6 +363,7 @@ price = df.iloc[-1].close
 st.metric("Option Price", round(price,2))
 
 # ================= TRADE LOG =================
+
 col1, col2 = st.columns(2)
 
 if col1.button("ENTRY"):
@@ -329,6 +374,7 @@ if col1.button("ENTRY"):
     })
 
 if col2.button("EXIT"):
+
     if st.session_state.trades and st.session_state.trades[-1]["Status"]=="Open":
 
         st.session_state.trades[-1].update({
@@ -352,5 +398,4 @@ if st.session_state.trades:
         "trades.csv"
     )
 
-# ================= LAST UPDATED =================
 st.caption(f"Last candle time: {df.iloc[-1]['date'].strftime('%H:%M:%S')}")
