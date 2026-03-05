@@ -12,9 +12,12 @@ API_SECRET = st.secrets["API_SECRET"]
 
 st.set_page_config(page_title="NIFTY Strategy Dashboard", layout="wide")
 
-st_autorefresh(interval=2000, key="refresh")
+st_autorefresh(interval=10000, key="refresh")
 
 # ================= SESSION STATE =================
+
+if "skip_update" not in st.session_state:
+    st.session_state.skip_update = False
 
 if "trades" not in st.session_state:
     st.session_state.trades = []
@@ -217,7 +220,7 @@ def update_if_new_candle(token):
 
         df = pd.concat([st.session_state.market_data, new_row]).drop_duplicates("date").tail(300)
 
-        df = StrategyLogic.compute(df.tail(200))
+        df = StrategyLogic.compute(df)
 
         st.session_state.market_data = df
 
@@ -307,10 +310,16 @@ option, nifty_price = get_atm_option()
 
 token = option.instrument_token
 
-if st.session_state.market_data is None:
-    load_initial_data(token)
+if not st.session_state.skip_update:
+
+    if st.session_state.market_data is None:
+        load_initial_data(token)
+    else:
+        update_if_new_candle(token)
+
 else:
-    update_if_new_candle(token)
+    st.session_state.skip_update = False
+
 
 df = st.session_state.market_data
 
@@ -372,6 +381,8 @@ col1, col2 = st.columns(2)
 
 if col1.button("ENTRY", use_container_width=True):
 
+    st.session_state.skip_update = True
+
     if not st.session_state.trades or st.session_state.trades[-1]["Status"]=="Closed":
 
         st.session_state.trades.append({
@@ -384,6 +395,8 @@ if col1.button("ENTRY", use_container_width=True):
 
 
 if col2.button("EXIT", use_container_width=True):
+
+    st.session_state.skip_update = True
 
     if st.session_state.trades and st.session_state.trades[-1]["Status"]=="Open":
 
