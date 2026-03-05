@@ -37,6 +37,7 @@ if "initialized" not in state:
     state.trades = []
     state.token = None
     state.initialized = True
+    state.last_trade_candle = None
 
 # ================= TOKEN LOAD =================
 
@@ -311,12 +312,19 @@ if c1.button("ENTRY"):
 
     if not state.trades or state.trades[-1]["Status"] == "Closed":
 
+        # Prevent duplicate trade in same candle
+        if state.last_trade_candle and latest["date"].minute == state.last_trade_candle.minute:
+            st.warning("Trade already taken this candle")
+            st.stop()
+
         trade = {
             "Option": symbol,
-            "Entry Time": datetime.now(IST),
+            "Entry Time": latest["date"].strftime("%Y-%m-%d %H:%M:%S"),
             "Entry Price": option_price,
             "Status": "Open"
         }
+
+        state.last_trade_candle = latest["date"]
 
         state.trades.append(trade)
 
@@ -328,7 +336,7 @@ if c2.button("EXIT"):
 
         t = state.trades[-1]
 
-        t["Exit Time"] = datetime.now(IST)
+        t["Exit Time"] = latest["date"].strftime("%Y-%m-%d %H:%M:%S")
         t["Exit Price"] = option_price
         t["Status"] = "Closed"
         t["P/L"] = t["Exit Price"] - t["Entry Price"]
@@ -337,7 +345,10 @@ if c2.button("EXIT"):
 
 # ================= DASHBOARD =================
 
-sec = max(1, 60 - datetime.now(IST).second)
+if latest is not None:
+    sec = max(1, 60 - latest["date"].second)
+else:
+    sec = 60
 
 st.info(f"Next candle in {sec}s")
 
@@ -416,6 +427,7 @@ if state.trades:
     st.subheader("Trade Log")
 
     tdf = pd.DataFrame(state.trades)
+    tdf = tdf.fillna("")
 
     st.dataframe(tdf, use_container_width=True)
 
