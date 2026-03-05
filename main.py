@@ -10,57 +10,47 @@ from streamlit_autorefresh import st_autorefresh
 API_KEY = st.secrets["API_KEY"]
 API_SECRET = st.secrets["API_SECRET"]
 
-st.set_page_config(page_title="NIFTY Strategy Dashboard", layout="wide")
+st.set_page_config(page_title="NIFTY Strategy", layout="wide")
 
-st_autorefresh(interval=10000, key="refresh")
-
-# ================= SESSION STATE =================
-
-if "skip_update" not in st.session_state:
-    st.session_state.skip_update = False
-
-if "trades" not in st.session_state:
-    st.session_state.trades = []
-
-if "access_token" not in st.session_state:
-    st.session_state.access_token = None
-
-if "market_data" not in st.session_state:
-    st.session_state.market_data = None
-
-if "last_candle_time" not in st.session_state:
-    st.session_state.last_candle_time = None
+st_autorefresh(interval=3000)
 
 kite = KiteConnect(api_key=API_KEY)
 
-# ================= LOGIN =================
+# ---------------- SESSION STATE ----------------
 
-query_params = st.query_params
+state = st.session_state
 
-if "request_token" in query_params:
-    data = kite.generate_session(query_params["request_token"], api_secret=API_SECRET)
-    st.session_state.access_token = data["access_token"]
+state.setdefault("access_token", None)
+state.setdefault("df", None)
+state.setdefault("last_candle", None)
+state.setdefault("trades", [])
+state.setdefault("skip_update", False)
+
+# ---------------- LOGIN ----------------
+
+params = st.query_params
+
+if "request_token" in params:
+    data = kite.generate_session(params["request_token"], api_secret=API_SECRET)
+    state.access_token = data["access_token"]
     st.query_params.clear()
 
-if not st.session_state.access_token:
-    st.link_button("🔐 Login to Zerodha", kite.login_url())
+if not state.access_token:
+    st.link_button("Login Zerodha", kite.login_url())
     st.stop()
 
-kite.set_access_token(st.session_state.access_token)
+kite.set_access_token(state.access_token)
 
-# ================= MODE =================
-
-mode = st.sidebar.radio("Mode", ["Live Trading", "Backtest"])
-
-# ================= CACHE =================
+# ---------------- CACHE ----------------
 
 @st.cache_data(ttl=86400)
-def get_instruments():
-    return pd.DataFrame(kite.instruments("NFO"))
+def load_instruments():
+    inst = pd.DataFrame(kite.instruments("NFO"))
+    return inst[(inst.name=="NIFTY") & (inst.segment=="NFO-OPT")]
 
 @st.cache_data(ttl=5)
-def get_quote(symbol):
-    return kite.quote([symbol])
+def get_quote():
+    return kite.quote(["NSE:NIFTY 50"])["NSE:NIFTY 50"]["last_price"]
 
 # ================= INDICATORS =================
 
@@ -147,55 +137,50 @@ class StrategyLogic:
 
         return df
 
+# ---------------- ATM OPTION ----------------
 
-# ================= ATM OPTION =================
+def get_option():
 
-def get_atm_option():
+    price = get_quote()
 
-    quote = get_quote("NSE:NIFTY 50")
+    strike = round(price/50)*50
 
-    nifty_price = quote["NSE:NIFTY 50"]["last_price"]
+    inst = load_instruments()
 
-    strike = round(nifty_price / 50) * 50
+    expiry = sorted(inst.expiry.unique())[0]
 
-    nifty = st.session_state.nifty_options
-
-    expiry = sorted(nifty["expiry"].unique())[0]
-
-    option = nifty[
-        (nifty["expiry"] == expiry) &
-        (nifty["strike"] == strike) &
-        (nifty["instrument_type"] == "CE")
+    opt = inst[
+        (inst.expiry==expiry) &
+        (inst.strike==strike) &
+        (inst.instrument_type=="CE")
     ]
 
-    return option.iloc[0], nifty_price
+    return opt.iloc[0], price
 
+# ---------------- DATA ----------------
 
-# ================= DATA LOADER =================
-
-def load_initial_data(token):
+def load_data(token):
 
     data = kite.historical_data(
         token,
-        datetime.today() - timedelta(days=1),
+        datetime.today()-timedelta(days=1),
         datetime.today(),
         "minute"
     )
 
     df = pd.DataFrame(data)
 
-    df = StrategyLogic.compute(df)
+    df = compute(df)
 
-    st.session_state.market_data = df.tail(300)
+    state.df = df.tail(200)
 
-    st.session_state.last_candle_time = df.iloc[-1]["date"]
+    state.last_candle = df.iloc[-1].date
 
-
-def update_if_new_candle(token):
+def update_data(token):
 
     latest = kite.historical_data(
         token,
-        datetime.today() - timedelta(minutes=2),
+        datetime.today()-timedelta(minutes=2),
         datetime.today(),
         "minute"
     )
@@ -203,136 +188,51 @@ def update_if_new_candle(token):
     if not latest:
         return
 
-    latest_df = pd.DataFrame(latest)
+    new = pd.DataFrame(latest).iloc[-1]
 
-    if latest_df.empty:
-        return
+    if new.date > state.last_candle:
 
-    new_time = latest_df.iloc[-1]["date"]
+        df = pd.concat([state.df, pd.DataFrame([new])])
 
-    if st.session_state.last_candle_time is None:
-        st.session_state.last_candle_time = new_time
-        return
+        df = df.drop_duplicates("date").tail(200)
 
-    if new_time > st.session_state.last_candle_time:
+        df = compute(df)
 
-        new_row = latest_df.iloc[-1:]
+        state.df = df
+        state.last_candle = new.date
 
-        df = pd.concat([st.session_state.market_data, new_row]).drop_duplicates("date").tail(300)
+# ---------------- UI ----------------
 
-        df = StrategyLogic.compute(df)
+st.title("NIFTY Strategy Dashboard")
 
-        st.session_state.market_data = df
+opt, price = get_option()
 
-        st.session_state.last_candle_time = new_time
+token = opt.instrument_token
 
-# ================= BACKTEST =================
+if not state.skip_update:
 
-def run_backtest(df):
-
-    trades = []
-
-    for i in range(120, len(df)-1):
-
-        signal = df.iloc[i]
-        entry = df.iloc[i+1]
-
-        conditions = [
-            entry.close > entry.ma_chan_high,
-            signal.ema9 < signal.ema21 and entry.ema9 > entry.ema21,
-            entry.close > entry.jurik,
-            signal.rsi < 60 and entry.rsi > 60,
-            entry.di_plus > 20,
-            entry.adx > 30,
-            not entry.sqz_on and entry.momentum > 0,
-            signal.wt1 < signal.wt2 and entry.wt1 > entry.wt2
-        ]
-
-        if all(conditions):
-
-            trades.append({
-                "Entry Time": entry.date,
-                "Entry Price": entry.close,
-                "Exit Time": entry.date,
-                "Exit Price": entry.low,
-                "P/L": entry.low - entry.close
-            })
-
-    return trades
-
-
-# ================= BACKTEST MODE =================
-
-if mode == "Backtest":
-
-    st.title("📊 Backtest")
-
-    option, nifty_price = get_atm_option()
-
-    token = option.instrument_token
-
-    data = kite.historical_data(
-        token,
-        datetime.today() - timedelta(days=1),
-        datetime.today(),
-        "minute"
-    )
-
-    df = pd.DataFrame(data)
-
-    df = StrategyLogic.compute(df)
-
-    trades = run_backtest(df)
-
-    if trades:
-
-        df_trades = pd.DataFrame(trades)
-
-        st.dataframe(df_trades)
-
-        st.download_button(
-            "Download Backtest CSV",
-            df_trades.to_csv(index=False),
-            "backtest.csv"
-        )
-
+    if state.df is None:
+        load_data(token)
     else:
-        st.warning("No trades found")
-
-    st.stop()
-
-
-# ================= LIVE MODE =================
-
-st.title("🚀 NIFTY Strategy Dashboard")
-
-option, nifty_price = get_atm_option()
-
-token = option.instrument_token
-
-if not st.session_state.skip_update:
-
-    if st.session_state.market_data is None:
-        load_initial_data(token)
-    else:
-        update_if_new_candle(token)
+        update_data(token)
 
 else:
-    st.session_state.skip_update = False
+    state.skip_update = False
 
+df = state.df
 
-df = st.session_state.market_data
+last = df.iloc[-1].date
 
-last_candle_time = df.iloc[-1]["date"]
-seconds_left = 60 - last_candle_time.second
+sec = 60-last.second
 
-st.info(f"⏱ Next candle refresh in **{seconds_left} seconds**")
-st.caption(f"Last candle time: {last_candle_time.strftime('%H:%M:%S')}")
+st.info(f"Next candle in {sec}s")
 
-col1, col2 = st.columns(2)
+col1,col2 = st.columns(2)
 
-col1.metric("NIFTY", round(nifty_price,2))
-col2.metric("ATM Option", option.tradingsymbol)
+col1.metric("NIFTY",round(price,2))
+col2.metric("ATM",opt.tradingsymbol)
+
+# ---------------- SIGNAL ----------------
 
 signal = df.iloc[-2]
 entry = df.iloc[-1]
@@ -367,60 +267,51 @@ for i,r in enumerate(conditions):
     cols[i%4].write(f"{'🟢' if r else '🔴'} {names[i]}")
 
 if all(conditions):
-    st.success("🔥 TRADE SIGNAL")
+    st.success("TRADE SIGNAL")
 else:
-    st.warning("⏳ WAIT")
+    st.warning("WAIT")
 
-price = df.iloc[-1].close
+# ---------------- TRADES ----------------
 
-st.metric("Option Price", round(price,2))
+c1,c2 = st.columns(2)
 
-# ================= TRADE LOG =================
+if c1.button("ENTRY"):
 
-col1, col2 = st.columns(2)
+    state.skip_update=True
 
-if col1.button("ENTRY", use_container_width=True):
+    if not state.trades or state.trades[-1]["Status"]=="Closed":
 
-    st.session_state.skip_update = True
-
-    if not st.session_state.trades or st.session_state.trades[-1]["Status"]=="Closed":
-
-        st.session_state.trades.append({
-            "Entry Time": entry.date,
-            "Entry Price": float(entry.close),
+        state.trades.append({
+            "Entry Time":entry.date,
+            "Entry Price":float(entry.close),
             "Status":"Open"
         })
 
-        st.toast("Entry recorded")
+if c2.button("EXIT"):
 
+    state.skip_update=True
 
-if col2.button("EXIT", use_container_width=True):
+    if state.trades and state.trades[-1]["Status"]=="Open":
 
-    st.session_state.skip_update = True
+        t=state.trades[-1]
 
-    if st.session_state.trades and st.session_state.trades[-1]["Status"]=="Open":
+        t["Exit Time"]=entry.date
+        t["Exit Price"]=float(entry.close)
+        t["Status"]="Closed"
+        t["P/L"]=t["Exit Price"]-t["Entry Price"]
 
-        trade = st.session_state.trades[-1]
+# ---------------- TRADE LOG ----------------
 
-        trade["Exit Time"] = entry.date
-        trade["Exit Price"] = float(entry.close)
-        trade["Status"] = "Closed"
-        trade["P/L"] = trade["Exit Price"] - trade["Entry Price"]
+if state.trades:
 
-        st.toast("Exit recorded")
-        
-if st.session_state.trades:
+    st.subheader("Trades")
 
-    st.subheader("Trade Log")
+    tdf=pd.DataFrame(state.trades)
 
-    df_trades = pd.DataFrame(st.session_state.trades)
-
-    st.dataframe(df_trades)
+    st.dataframe(tdf,use_container_width=True)
 
     st.download_button(
-        "Download CSV",
-        df_trades.to_csv(index=False),
+        "Download",
+        tdf.to_csv(index=False),
         "trades.csv"
     )
-
-st.caption(f"Last candle time: {df.iloc[-1]['date'].strftime('%H:%M:%S')}")
