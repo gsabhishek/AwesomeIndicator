@@ -170,9 +170,15 @@ def get_option():
 
 # ================= DATA =================
 def update_local_candle(price):
-    now = datetime.now()
-    # Floor the time to the start of the minute (e.g., 10:05:45 -> 10:05:00)
+    now = datetime.now().replace(tzinfo=None) 
     minute_timestamp = now.replace(second=0, microsecond=0)
+
+    if state.current_minute is None:
+        # If state.df exists, sync the minute to the last candle in the DF
+        if state.df is not None and not state.df.empty:
+            state.current_minute = state.df.iloc[-1]["date"]
+        else:
+            state.current_minute = minute_timestamp
 
     # 1. INITIALIZE: If this is the very first tick of the session
     if state.current_minute is None:
@@ -253,17 +259,14 @@ def load_data(token):
         st.stop()
 
     df = pd.DataFrame(data)
-
-    # Ensure datetime column exists
     if "date" not in df.columns and "datetime" in df.columns:
         df.rename(columns={"datetime": "date"}, inplace=True)
 
-    df["date"] = pd.to_datetime(df["date"])
+    # FIX: Convert to datetime AND strip timezone info
+    df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(None)
 
     df = StrategyLogic.compute(df)
-
     state.df = df.tail(200).reset_index(drop=True)
-
     state.last_candle = state.df.iloc[-1]["date"]
 
 # ================= UI =================
