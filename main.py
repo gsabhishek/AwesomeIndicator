@@ -26,7 +26,7 @@ if "initialized" not in state:
     state.token = None
     state.initialized = True
 
-st_autorefresh(interval=4000)
+st_autorefresh(interval=10000)
 
 kite = KiteConnect(api_key=API_KEY)
 
@@ -168,82 +168,26 @@ def get_option():
 
     return opt.iloc[0], price
 
-# ================= DATA =================
-def update_local_candle(price):
-    now = datetime.now().replace(tzinfo=None) 
-    minute_timestamp = now.replace(second=0, microsecond=0)
+def fetch_latest_candle(token):
 
-    if state.current_minute is None:
-        # If state.df exists, sync the minute to the last candle in the DF
-        if state.df is not None and not state.df.empty:
-            state.current_minute = state.df.iloc[-1]["date"]
-        else:
-            state.current_minute = minute_timestamp
+    data = kite.historical_data(
+        token,
+        datetime.now() - timedelta(minutes=2),
+        datetime.now(),
+        "minute"
+    )
 
-    # 1. INITIALIZE: If this is the very first tick of the session
-    if state.current_minute is None:
-        state.current_minute = minute_timestamp
-        state.current_candle = {
-            "date": minute_timestamp,
-            "open": price, "high": price, "low": price, "close": price, "volume": 0
-        }
-        return
+    if not data:
+        return None
 
-    # 2. NEW MINUTE DETECTED: Close the previous candle and move it to history
-    if minute_timestamp > state.current_minute:
-        # Convert the finished live candle to a DataFrame row
-        completed_candle = pd.DataFrame([state.current_candle])
-        
-        # Append to main history and maintain the 200-period window
-        state.df = pd.concat([state.df, completed_candle], ignore_index=True).tail(200)
-        
-        # RECALCULATE INDICATORS: Only happens once per minute now (saves CPU)
-        state.df = StrategyLogic.compute(state.df)
-        
-        # Reset for the new minute
-        state.current_minute = minute_timestamp
-        state.current_candle = {
-            "date": minute_timestamp,
-            "open": price, "high": price, "low": price, "close": price, "volume": 0
-        }
-    
-    # 3. UPDATE CURRENT TICK: Standard OHLC update for the active minute
-    else:
-        state.current_candle["high"] = max(state.current_candle["high"], price)
-        state.current_candle["low"] = min(state.current_candle["low"], price)
-        state.current_candle["close"] = price
-def update_local_candle1(price):
+    df = pd.DataFrame(data)
 
-    now = datetime.now()
-    minute = now.replace(second=0, microsecond=0)
+    if "date" not in df.columns and "datetime" in df.columns:
+        df.rename(columns={"datetime":"date"}, inplace=True)
 
-    if state.current_minute != minute:
+    df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(None)
 
-        if state.current_candle is not None:
-
-            new_row = pd.DataFrame([state.current_candle])
-
-            state.df = pd.concat([state.df, new_row]).tail(200)
-
-            state.df = StrategyLogic.compute(state.df)
-
-        state.current_minute = minute
-
-        state.current_candle = {
-            "date": minute,
-            "open": price,
-            "high": price,
-            "low": price,
-            "close": price,
-            "volume": 0
-        }
-
-    else:
-
-        state.current_candle["high"] = max(state.current_candle["high"], price)
-        state.current_candle["low"] = min(state.current_candle["low"], price)
-        state.current_candle["close"] = price
-
+    return df.iloc[-1]
 
 def load_data(token):
 
@@ -275,8 +219,6 @@ st.title("NIFTY Strategy Dashboard")
 
 opt, price = get_option()
 
-option_price = get_option_price(opt.tradingsymbol)
-
 token = opt.instrument_token
 
 # ================= TOKEN SWITCH =================
@@ -299,7 +241,21 @@ if state.df is None:
 
 # ================= BUILD LIVE CANDLE =================
 
-update_local_candle(option_price)
+latest = fetch_latest_candle(token)
+
+if latest is not None:
+
+    if state.last_candle != latest["date"]:
+
+        new_row = pd.DataFrame([latest])
+
+        state.df = pd.concat([state.df, new_row]).tail(200)
+
+        state.df = StrategyLogic.compute(state.df)
+
+        state.last_candle = latest["date"]
+
+option_price = latest["close"] if latest is not None else price
 
 # ================= TRADE BUTTONS =================
 
@@ -338,21 +294,6 @@ if exit_click:
 # ================= DATA UPDATE =================
 
 df = state.df
-
-if state.current_candle is not None:
-
-    live_row = pd.DataFrame([state.current_candle])
-
-    df = pd.concat([df, live_row]).tail(200)
-
-    if state.current_candle is not None:
-
-        live_row = pd.DataFrame([state.current_candle])
-
-        df = pd.concat([state.df, live_row]).tail(200)
-
-        df = StrategyLogic.compute(df)
-
 # ================= DASHBOARD =================
 
 sec = max(1, 60 - datetime.now().second)
@@ -366,8 +307,8 @@ col2.metric("Option", round(option_price, 2))
 
 # ================= SIGNAL =================
 
-if len(df) < 2:
-    st.warning("Waiting for enough candle data...")
+if df is None or len(df) < 30:
+    st.warning("Indicators warming up...")
     st.stop()
 signal = df.iloc[-2]
 entry = df.iloc[-1]
