@@ -15,6 +15,41 @@ IST = pytz.timezone("Asia/Kolkata")
 
 logging.basicConfig(level=logging.INFO)
 
+import requests
+import base64
+
+def save_file_to_github(local_file, repo_path):
+
+    token = st.secrets["GITHUB_TOKEN"]
+    repo = st.secrets["GITHUB_REPO"]
+
+    url = f"https://api.github.com/repos/{repo}/contents/{repo_path}"
+
+    with open(local_file, "rb") as f:
+        content = base64.b64encode(f.read()).decode()
+
+    headers = {
+        "Authorization": f"token {token}"
+    }
+
+    # Check if file exists
+    r = requests.get(url, headers=headers)
+
+    sha = None
+    if r.status_code == 200:
+        sha = r.json()["sha"]
+
+    data = {
+        "message": f"Update {repo_path}",
+        "content": content,
+        "branch": "main"
+    }
+
+    if sha:
+        data["sha"] = sha
+
+    requests.put(url, headers=headers, json=data)
+
 # ================= CONFIG =================
 
 API_KEY = st.secrets["API_KEY"]
@@ -54,6 +89,7 @@ def load_settings():
 def save_settings(settings):
     with open(SETTINGS_FILE, "w") as f:
         json.dump(settings, f)
+    save_file_to_github(SETTINGS_FILE, "data/settings.json")
 
 # ================= SESSION STATE =================
 
