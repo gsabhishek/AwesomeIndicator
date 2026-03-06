@@ -9,6 +9,7 @@ import ta
 from streamlit_autorefresh import st_autorefresh
 import os
 import logging
+import json
 
 IST = pytz.timezone("Asia/Kolkata")
 
@@ -26,6 +27,34 @@ st_autorefresh(interval=10000)
 
 kite = KiteConnect(api_key=API_KEY)
 
+# ================= SESSION SETTINGS =================
+
+import json
+
+SETTINGS_FILE = "settings.json"
+
+DEFAULT_SETTINGS = {
+    "ema_fast": 9,
+    "ema_slow": 21,
+    "jma_fast_len": 8,
+    "jma_slow_len": 12,
+    "rsi_window": 7,
+    "rsi_threshold": 50,
+    "adx_threshold": 50,
+    "di_plus_threshold": 20,
+    "ma_chan_window": 10
+}
+
+def load_settings():
+    if os.path.exists(SETTINGS_FILE):
+        with open(SETTINGS_FILE, "r") as f:
+            return json.load(f)
+    return DEFAULT_SETTINGS.copy()
+
+def save_settings(settings):
+    with open(SETTINGS_FILE, "w") as f:
+        json.dump(settings, f)
+
 # ================= SESSION STATE =================
 
 state = st.session_state
@@ -39,6 +68,9 @@ if "initialized" not in state:
     state.initialized = True
     state.last_trade_candle = None
     state.compute_params = {}
+
+if "settings" not in state:
+    state.settings = load_settings()
 
 # ================= TOKEN LOAD =================
 
@@ -272,28 +304,43 @@ st.write("Selected Option:", symbol)
 price = get_quote()
 
 # ================= SIDEBAR PARAMETERS =================
-
 with st.sidebar.expander("⚙️ Strategy Parameters", expanded=False):
-    ema_fast = st.number_input("EMA Fast Period", min_value=2, max_value=50, value=9, step=1)
-    ema_slow = st.number_input("EMA Slow Period", min_value=2, max_value=200, value=21, step=1)
-    jma_fast_len = st.number_input("JMA Fast Length", min_value=2, max_value=50, value=8, step=1)
-    jma_slow_len = st.number_input("JMA Slow Length", min_value=2, max_value=50, value=12, step=1)
-    rsi_window = st.number_input("RSI Window", min_value=2, max_value=30, value=7, step=1)
-    rsi_threshold = st.slider("RSI Threshold", min_value=30, max_value=70, value=50)
-    adx_threshold = st.slider("ADX Threshold", min_value=10, max_value=80, value=50)
-    di_plus_threshold = st.slider("DI+ Threshold", min_value=5, max_value=50, value=20)
-    ma_chan_window = st.number_input("MA Channel Window", min_value=2, max_value=50, value=10, step=1)
+    ema_fast = st.number_input("EMA Fast Period", min_value=2, max_value=50, step=1, value=state.settings["ema_fast"])
+    ema_slow = st.number_input("EMA Slow Period", min_value=2, max_value=200, step=1, value=state.settings["ema_slow"])
+    jma_fast_len = st.number_input("JMA Fast Length", min_value=2, max_value=50, step=1, value=state.settings["jma_fast_len"])
+    jma_slow_len = st.number_input("JMA Slow Length", min_value=2, max_value=50, step=1, value=state.settings["jma_slow_len"])
+    rsi_window = st.number_input("RSI Window", min_value=2, max_value=30, step=1, value=state.settings["rsi_window"])
+    rsi_threshold = st.slider("RSI Threshold", min_value=30, max_value=70, value=state.settings["rsi_threshold"])
+    adx_threshold = st.slider("ADX Threshold", min_value=10, max_value=80, value=state.settings["adx_threshold"])
+    di_plus_threshold = st.slider("DI+ Threshold", min_value=5, max_value=50, value=state.settings["di_plus_threshold"])
+    ma_chan_window = st.number_input("MA Channel Window", min_value=2, max_value=50, step=1, value=state.settings["ma_chan_window"])
 
 st.sidebar.markdown("---")
 
-_compute_params = dict(
-    ema_fast=int(ema_fast),
-    ema_slow=int(ema_slow),
-    jma_fast_len=int(jma_fast_len),
-    jma_slow_len=int(jma_slow_len),
-    rsi_window=int(rsi_window),
-    ma_chan_window=int(ma_chan_window),
-)
+new_settings = {
+    "ema_fast": int(ema_fast),
+    "ema_slow": int(ema_slow),
+    "jma_fast_len": int(jma_fast_len),
+    "jma_slow_len": int(jma_slow_len),
+    "rsi_window": int(rsi_window),
+    "rsi_threshold": rsi_threshold,
+    "adx_threshold": adx_threshold,
+    "di_plus_threshold": di_plus_threshold,
+    "ma_chan_window": int(ma_chan_window)
+}
+
+if new_settings != state.settings:
+    save_settings(new_settings)
+    state.settings = new_settings
+
+_compute_params = {
+    "ema_fast": state.settings["ema_fast"],
+    "ema_slow": state.settings["ema_slow"],
+    "jma_fast_len": state.settings["jma_fast_len"],
+    "jma_slow_len": state.settings["jma_slow_len"],
+    "rsi_window": state.settings["rsi_window"],
+    "ma_chan_window": state.settings["ma_chan_window"],
+}
 
 # ================= TOKEN SWITCH =================
 
@@ -411,9 +458,9 @@ conditions = [
     entry.close > entry.ma_chan_high,
     signal.ema_fast < signal.ema_slow and entry.ema_fast > entry.ema_slow,
     entry.jma_fast > entry.jma_slow,
-    signal.rsi < rsi_threshold and entry.rsi > rsi_threshold,
-    entry.di_plus > di_plus_threshold,
-    entry.adx > adx_threshold and entry.adx > signal.adx,
+    signal.rsi < state.settings["rsi_threshold"] and entry.rsi > state.settings["rsi_threshold"],
+    entry.di_plus > state.settings["di_plus_threshold"],
+    entry.adx > state.settings["adx_threshold"] and entry.adx > signal.adx,
     entry.momentum > 0,
     signal.wt1 < signal.wt2 and entry.wt1 > entry.wt2
 ]
@@ -431,11 +478,11 @@ names = [
 
 rules = [
     "Price > MA Channel High",
-    f"EMA{ema_fast} crossed above EMA{ema_slow}",
+    f"EMA{state.settings['ema_fast']} crossed above EMA{state.settings['ema_slow']}",
     "JMA Fast > JMA Slow",
-    f"RSI crossed above {rsi_threshold}",
-    f"DI+ > {di_plus_threshold}",
-    f"ADX > {adx_threshold} & rising",
+    f"RSI crossed above {state.settings['rsi_threshold']}",
+    f"DI+ > {state.settings['di_plus_threshold']}",
+    f"ADX > {state.settings['adx_threshold']} & rising",
     "Momentum > 0",
     "WT1 crossed above WT2",
 ]
@@ -470,7 +517,7 @@ for i, r in enumerate(conditions):
     if i == 0:  # MA Channel
         col_c.write(f"Price: {entry.close:.1f} / MA High: {entry.ma_chan_high:.1f}")
     elif i == 1:  # EMA Cross
-        col_c.write(f"EMA{ema_fast}: {entry.ema_fast:.0f} / EMA{ema_slow}: {entry.ema_slow:.0f}")
+        col_c.write(f"EMA{state.settings['ema_fast']}: {entry.ema_fast:.0f} / EMA{state.settings['ema_slow']}: {entry.ema_slow:.0f}")
     elif i == 2:  # Jurik Trend
         col_c.write(f"JMAf: {entry.jma_fast:.1f} / JMAs: {entry.jma_slow:.1f}")
     elif i == 3:  # RSI Cross
@@ -493,8 +540,8 @@ for i, r in enumerate(conditions):
 st.subheader("Indicator Values")
 
 indicator_metrics = [
-    (f"EMA{ema_fast}", round(entry.ema_fast, 2), round(entry.ema_fast - signal.ema_fast, 2)),
-    (f"EMA{ema_slow}", round(entry.ema_slow, 2), round(entry.ema_slow - signal.ema_slow, 2)),
+    (f"EMA{state.settings['ema_fast']}", round(entry.ema_fast, 2), round(entry.ema_fast - signal.ema_fast, 2)),
+    (f"EMA{state.settings['ema_slow']}", round(entry.ema_slow, 2), round(entry.ema_slow - signal.ema_slow, 2)),
     ("JMA Fast", round(entry.jma_fast, 2), round(entry.jma_fast - signal.jma_fast, 2)),
     ("JMA Slow", round(entry.jma_slow, 2), round(entry.jma_slow - signal.jma_slow, 2)),
     ("RSI", round(entry.rsi, 2), round(entry.rsi - signal.rsi, 2)),
