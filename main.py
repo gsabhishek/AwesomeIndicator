@@ -252,7 +252,7 @@ def squeeze_momentum(df, length=20, mult=2.0, lengthKC=20, multKC=1.5):
 
     # ---------------- Bollinger Bands ----------------
     basis = close.rolling(length).mean()
-    dev = close.rolling(length).std() * mult
+    dev = close.rolling(length).std(ddof=0) * mult
 
     upperBB = basis + dev
     lowerBB = basis - dev
