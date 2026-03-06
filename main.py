@@ -128,6 +128,7 @@ if "initialized" not in state:
     state.initialized = True
     state.last_trade_candle = None
     state.compute_params = {}
+    state.option_type = None
 
 if "settings" not in state:
     state.settings = load_settings()
@@ -271,7 +272,7 @@ class StrategyLogic:
 
 # ================= OPTION SELECT =================
 
-def get_option():
+def get_option(option_type):
 
     if "nifty_options" not in state:
         state.nifty_options = load_instruments()
@@ -284,13 +285,15 @@ def get_option():
 
     expiry = sorted(inst.expiry.unique())[0]
 
+    inst_type = "CE" if option_type == "CALL" else "PE"
+
     ce_options = inst[
         (inst.expiry == expiry) &
-        (inst.instrument_type == "CE")
+        (inst.instrument_type == inst_type)
     ].copy()
 
     if ce_options.empty:
-        st.error("No CE options found")
+        st.error(f"No {inst_type} options found")
         st.stop()
 
     spot = get_quote()
@@ -310,15 +313,15 @@ def get_option():
         st.warning("ATM strikes not available, showing full list")
         ce_options = inst[
             (inst.expiry == expiry) &
-            (inst.instrument_type == "CE")
+            (inst.instrument_type == inst_type)
         ].copy()
 
     ce_options = ce_options.sort_values("strike")
 
-    ce_options["label"] = ce_options["strike"].astype(int).astype(str) + " CE"
+    ce_options["label"] = ce_options["strike"].astype(int).astype(str) + f" {inst_type}"
 
     selected = st.selectbox(
-        "Select NIFTY Call Option",
+        f"Select NIFTY {inst_type}",
         ce_options["label"],
         index=len(ce_options)//2
     )
@@ -381,7 +384,19 @@ def load_data(token, **kwargs):
 
 st.title("NIFTY Strategy Dashboard")
 
-opt = get_option()
+option_type = st.segmented_control(
+    "Option Type",
+    ["CALL", "PUT"],
+    default="CALL"
+)
+
+if state.option_type != option_type:
+    state.df = None
+    state.token = None
+    state.last_candle = None
+    state.option_type = option_type
+
+opt = get_option(option_type)
 
 token = opt.instrument_token
 symbol = opt.tradingsymbol
