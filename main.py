@@ -218,6 +218,10 @@ def get_option():
 
     inst = state.nifty_options
 
+    if inst is None or len(inst) == 0:
+        st.error("Instrument list not loaded")
+        st.stop()
+
     expiry = sorted(inst.expiry.unique())[0]
 
     ce_options = inst[
@@ -225,7 +229,15 @@ def get_option():
         (inst.instrument_type == "CE")
     ].copy()
 
+    if ce_options.empty:
+        st.error("No CE options found")
+        st.stop()
+
     spot = get_quote()
+
+    if spot == 0:
+        st.warning("Waiting for NIFTY price...")
+        st.stop()
 
     atm = round(spot / 50) * 50
 
@@ -233,6 +245,13 @@ def get_option():
         (ce_options.strike >= atm - 250) &
         (ce_options.strike <= atm + 250)
     ]
+
+    if ce_options.empty:
+        st.warning("ATM strikes not available, showing full list")
+        ce_options = inst[
+            (inst.expiry == expiry) &
+            (inst.instrument_type == "CE")
+        ].copy()
 
     ce_options = ce_options.sort_values("strike")
 
@@ -244,9 +263,13 @@ def get_option():
         index=len(ce_options)//2
     )
 
-    row = ce_options[ce_options["label"] == selected].iloc[0]
+    row = ce_options.loc[ce_options["label"] == selected]
 
-    return row
+    if row.empty:
+        st.error("Selected option not found")
+        st.stop()
+
+    return row.iloc[0]
 
 # ================= DATA =================
 
