@@ -638,7 +638,7 @@ entry = df.iloc[-1]
 conditions = [
 
     entry.close > entry.ma_chan_high,
-    entry.ema_cross_up,
+    entry.ema_fast > entry.ema_slow and signal.ema_fast > signal.ema_slow,
     entry.jma_fast > entry.jma_slow,
     signal.rsi < state.settings["rsi_threshold"] and entry.rsi > state.settings["rsi_threshold"],
     entry.di_plus > state.settings["di_plus_threshold"],
@@ -649,7 +649,7 @@ conditions = [
 
 names = [
     "MA Channel",
-    "EMA Cross",
+    "EMA9 > EMA21",
     "Jurik Trend",
     "RSI Cross",
     "DMI Strength",
@@ -660,7 +660,7 @@ names = [
 
 rules = [
     "Price > MA Channel High",
-    f"EMA{state.settings['ema_fast']} crossed above EMA{state.settings['ema_slow']}",
+    f"EMA{state.settings['ema_fast']} is above EMA{state.settings['ema_slow']}",
     "JMA Fast > JMA Slow",
     f"RSI crossed above {state.settings['rsi_threshold']}",
     f"DI+ > {state.settings['di_plus_threshold']}",
