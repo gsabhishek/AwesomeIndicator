@@ -10,45 +10,68 @@ from streamlit_autorefresh import st_autorefresh
 import os
 import logging
 import json
+import requests
+import base64
 
 IST = pytz.timezone("Asia/Kolkata")
 
 logging.basicConfig(level=logging.INFO)
 
-import requests
-import base64
+def load_file_from_github(repo_path, local_file):
+
+    try:
+        token = st.secrets["GITHUB_TOKEN"]
+        repo = st.secrets["GITHUB_REPO"]
+
+        url = f"https://api.github.com/repos/{repo}/contents/{repo_path}"
+
+        headers = {"Authorization": f"token {token}"}
+
+        r = requests.get(url, headers=headers)
+
+        if r.status_code == 200:
+            content = base64.b64decode(r.json()["content"])
+
+            os.makedirs(os.path.dirname(local_file), exist_ok=True)
+
+            with open(local_file, "wb") as f:
+                f.write(content)
+
+            return True
+
+    except Exception as e:
+        logging.error(f"GitHub load failed: {e}")
+
+    return False
 
 def save_file_to_github(local_file, repo_path):
+    try:
+        token = st.secrets["GITHUB_TOKEN"]
+        repo = st.secrets["GITHUB_REPO"]
 
-    token = st.secrets["GITHUB_TOKEN"]
-    repo = st.secrets["GITHUB_REPO"]
+        url = f"https://api.github.com/repos/{repo}/contents/{repo_path}"
 
-    url = f"https://api.github.com/repos/{repo}/contents/{repo_path}"
+        with open(local_file, "rb") as f:
+            content = base64.b64encode(f.read()).decode()
 
-    with open(local_file, "rb") as f:
-        content = base64.b64encode(f.read()).decode()
+        headers = {"Authorization": f"token {token}"}
 
-    headers = {
-        "Authorization": f"token {token}"
-    }
+        r = requests.get(url, headers=headers)
+        sha = r.json().get("sha") if r.status_code == 200 else None
 
-    # Check if file exists
-    r = requests.get(url, headers=headers)
+        data = {
+            "message": f"Update {repo_path}",
+            "content": content,
+            "branch": "main"
+        }
 
-    sha = None
-    if r.status_code == 200:
-        sha = r.json()["sha"]
+        if sha:
+            data["sha"] = sha
 
-    data = {
-        "message": f"Update {repo_path}",
-        "content": content,
-        "branch": "main"
-    }
+        requests.put(url, headers=headers, json=data)
 
-    if sha:
-        data["sha"] = sha
-
-    requests.put(url, headers=headers, json=data)
+    except Exception as e:
+        logging.error(f"GitHub save failed: {e}")
 
 # ================= CONFIG =================
 
@@ -66,7 +89,7 @@ kite = KiteConnect(api_key=API_KEY)
 
 import json
 
-SETTINGS_FILE = "settings.json"
+SETTINGS_FILE = "data/settings.json"
 
 DEFAULT_SETTINGS = {
     "ema_fast": 9,
@@ -81,6 +104,7 @@ DEFAULT_SETTINGS = {
 }
 
 def load_settings():
+    load_file_from_github("data/settings.json", SETTINGS_FILE)
     if os.path.exists(SETTINGS_FILE):
         with open(SETTINGS_FILE, "r") as f:
             return json.load(f)
