@@ -107,7 +107,11 @@ def is_token_valid():
 
 if not is_token_valid():
     st.warning("Session expired. Login again.")
-    os.remove(TOKEN_FILE)
+
+    if os.path.exists(TOKEN_FILE):
+        os.remove(TOKEN_FILE)
+
+    state.access_token = None
     st.stop()
 
 # ================= SAFE API =================
