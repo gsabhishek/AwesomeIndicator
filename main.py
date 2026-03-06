@@ -38,6 +38,7 @@ if "initialized" not in state:
     state.token = None
     state.initialized = True
     state.last_trade_candle = None
+    state.compute_params = {}
 
 # ================= TOKEN LOAD =================
 
@@ -144,21 +145,22 @@ def squeeze_momentum(df):
 class StrategyLogic:
 
     @staticmethod
-    def compute(df):
+    def compute(df, ema_fast=9, ema_slow=21, jma_fast_len=8, jma_slow_len=12,
+                rsi_window=7, ma_chan_window=10):
 
         df = df.copy()
 
-        df["jma_fast"] = jurik_ma(df["close"], 8)
-        df["jma_slow"] = jurik_ma(df["close"], 12)
+        df["jma_fast"] = jurik_ma(df["close"], jma_fast_len)
+        df["jma_slow"] = jurik_ma(df["close"], jma_slow_len)
 
         df["wt1"], df["wt2"] = wavetrend(df)
 
         df["sqz_on"], df["momentum"] = squeeze_momentum(df)
 
-        df["ema9"] = df["close"].ewm(span=9).mean()
-        df["ema21"] = df["close"].ewm(span=21).mean()
+        df["ema_fast"] = df["close"].ewm(span=ema_fast).mean()
+        df["ema_slow"] = df["close"].ewm(span=ema_slow).mean()
 
-        df["rsi"] = ta.momentum.RSIIndicator(df["close"], window=7).rsi()
+        df["rsi"] = ta.momentum.RSIIndicator(df["close"], window=rsi_window).rsi()
 
         adx = ta.trend.ADXIndicator(df["high"], df["low"], df["close"], window=14)
 
@@ -166,8 +168,8 @@ class StrategyLogic:
         df["di_plus"] = adx.adx_pos()
         df["di_minus"] = adx.adx_neg()
 
-        df["ma_chan_high"] = df["high"].rolling(10).mean()
-        df["ma_chan_low"] = df["low"].rolling(10).mean()
+        df["ma_chan_high"] = df["high"].rolling(ma_chan_window).mean()
+        df["ma_chan_low"] = df["low"].rolling(ma_chan_window).mean()
 
         return df
 
@@ -234,7 +236,7 @@ def fetch_latest_candle(token):
     return df.iloc[-1]
 
 
-def load_data(token):
+def load_data(token, **kwargs):
 
     data = safe_call(lambda: kite.historical_data(
         token,
@@ -250,7 +252,7 @@ def load_data(token):
 
     df["date"] = pd.to_datetime(df["date"], utc=True).dt.tz_convert(None)
 
-    df = StrategyLogic.compute(df)
+    df = StrategyLogic.compute(df, **kwargs)
 
     state.df = df.tail(200).reset_index(drop=True)
 
@@ -269,17 +271,43 @@ st.write("Selected Option:", symbol)
 
 price = get_quote()
 
+# ================= SIDEBAR PARAMETERS =================
+
+with st.sidebar.expander("⚙️ Strategy Parameters", expanded=False):
+    ema_fast = st.number_input("EMA Fast Period", min_value=2, max_value=50, value=9, step=1)
+    ema_slow = st.number_input("EMA Slow Period", min_value=2, max_value=200, value=21, step=1)
+    jma_fast_len = st.number_input("JMA Fast Length", min_value=2, max_value=50, value=8, step=1)
+    jma_slow_len = st.number_input("JMA Slow Length", min_value=2, max_value=50, value=12, step=1)
+    rsi_window = st.number_input("RSI Window", min_value=2, max_value=30, value=7, step=1)
+    rsi_threshold = st.slider("RSI Threshold", min_value=30, max_value=70, value=50)
+    adx_threshold = st.slider("ADX Threshold", min_value=10, max_value=80, value=50)
+    di_plus_threshold = st.slider("DI+ Threshold", min_value=5, max_value=50, value=20)
+    ma_chan_window = st.number_input("MA Channel Window", min_value=2, max_value=50, value=10, step=1)
+
+st.sidebar.markdown("---")
+
+_compute_params = dict(
+    ema_fast=int(ema_fast),
+    ema_slow=int(ema_slow),
+    jma_fast_len=int(jma_fast_len),
+    jma_slow_len=int(jma_slow_len),
+    rsi_window=int(rsi_window),
+    ma_chan_window=int(ma_chan_window),
+)
+
 # ================= TOKEN SWITCH =================
 
 if state.token != token:
     state.df = None
     state.last_candle = None
     state.token = token
+    state.compute_params = {}
 
 # ================= LOAD DATA =================
 
 if state.df is None:
-    load_data(token)
+    load_data(token, **_compute_params)
+    state.compute_params = _compute_params
 
 # ================= UPDATE CANDLE =================
 
@@ -295,9 +323,14 @@ if latest is not None and state.last_candle != latest["date"]:
 
     state.df = pd.concat([state.df, new_row]).tail(200)
 
-    state.df = StrategyLogic.compute(state.df)
+    state.df = StrategyLogic.compute(state.df, **_compute_params)
 
     state.last_candle = latest["date"]
+    state.compute_params = _compute_params
+
+elif state.compute_params != _compute_params and state.df is not None:
+    state.df = StrategyLogic.compute(state.df, **_compute_params)
+    state.compute_params = _compute_params
 
 option_price = latest["close"] if latest is not None else price
 
@@ -375,57 +408,106 @@ entry = df.iloc[-1]
 
 conditions = [
 
-    entry.close > entry.ma_chan_high, #Price above MA Channel
-    signal.ema9 < signal.ema21 and entry.ema9 > entry.ema21, #EMA Bullish Crossover
-    entry.jma_fast > entry.jma_slow, #Jurik Trend Bullish
-    signal.rsi < 50 and entry.rsi > 50, #RSI Crossing 50
-    entry.di_plus > 20, #DMI Strength
-    entry.adx > 50 and entry.adx > signal.adx, #ADX Strengthening
-    entry.momentum > 0, #Squeeze Momentum Positive
-    signal.wt1 < signal.wt2 and entry.wt1 > entry.wt2 #WaveTrend Bullish Crossover
+    entry.close > entry.ma_chan_high,
+    signal.ema_fast < signal.ema_slow and entry.ema_fast > entry.ema_slow,
+    entry.jma_fast > entry.jma_slow,
+    signal.rsi < rsi_threshold and entry.rsi > rsi_threshold,
+    entry.di_plus > di_plus_threshold,
+    entry.adx > adx_threshold and entry.adx > signal.adx,
+    entry.momentum > 0,
+    signal.wt1 < signal.wt2 and entry.wt1 > entry.wt2
 ]
 
 names = [
     "MA Channel",
     "EMA Cross",
     "Jurik Trend",
-    "RSI Cross 60",
+    "RSI Cross",
     "DMI Strength",
     "ADX Trend",
     "Squeeze Momentum",
     "WaveTrend Cross"
 ]
 
-st.subheader("Checklist")
+rules = [
+    "Price > MA Channel High",
+    f"EMA{ema_fast} crossed above EMA{ema_slow}",
+    "JMA Fast > JMA Slow",
+    f"RSI crossed above {rsi_threshold}",
+    f"DI+ > {di_plus_threshold}",
+    f"ADX > {adx_threshold} & rising",
+    "Momentum > 0",
+    "WT1 crossed above WT2",
+]
 
-cols = st.columns(4)
+met = sum(conditions)
+total = len(conditions)
 
-for i, r in enumerate(conditions):
-    cols[i % 4].write(f"{'🟢' if r else '🔴'} {names[i]}")
+# ================= CRITERIA SUMMARY =================
+
+summary_color = "green" if met == total else ("orange" if met >= total // 2 else "red")
+st.markdown(
+    f"<h3 style='color:{summary_color}'>{'✅' if met == total else '⚠️'} {met} / {total} criteria met</h3>",
+    unsafe_allow_html=True
+)
+st.progress(met / total)
 
 if all(conditions):
     st.success("🔥 TRADE SIGNAL")
 else:
     st.warning("WAIT")
 
+# ================= CHECKLIST =================
+
+st.subheader("Checklist")
+
+for i, r in enumerate(conditions):
+    col_a, col_b, col_c = st.columns([2, 5, 3])
+
+    col_a.write(f"{'🟢' if r else '🔴'} **{names[i]}**")
+    col_b.write(rules[i])
+
+    if i == 0:  # MA Channel
+        col_c.write(f"Price: {entry.close:.1f} / MA High: {entry.ma_chan_high:.1f}")
+    elif i == 1:  # EMA Cross
+        col_c.write(f"EMA{ema_fast}: {entry.ema_fast:.0f} / EMA{ema_slow}: {entry.ema_slow:.0f}")
+    elif i == 2:  # Jurik Trend
+        col_c.write(f"JMAf: {entry.jma_fast:.1f} / JMAs: {entry.jma_slow:.1f}")
+    elif i == 3:  # RSI Cross
+        col_c.write(f"RSI: {entry.rsi:.1f}")
+        col_c.progress(min(max(entry.rsi / 100, 0.0), 1.0))
+    elif i == 4:  # DMI Strength
+        col_c.write(f"DI+: {entry.di_plus:.1f}")
+        col_c.progress(min(max(entry.di_plus / 100, 0.0), 1.0))
+    elif i == 5:  # ADX Trend
+        direction = "↑" if entry.adx > signal.adx else "↓"
+        col_c.write(f"ADX: {entry.adx:.1f} ({direction})")
+        col_c.progress(min(max(entry.adx / 100, 0.0), 1.0))
+    elif i == 6:  # Squeeze Momentum
+        col_c.write(f"Momentum: {entry.momentum:.2f}")
+    elif i == 7:  # WaveTrend Cross
+        col_c.write(f"WT1: {entry.wt1:.1f} / WT2: {entry.wt2:.1f}")
+
 # ================= INDICATORS =================
 
 st.subheader("Indicator Values")
 
-vals = {
-    "EMA9            ": round(entry.ema9, 2),
-    "EMA21           ": round(entry.ema21, 2),
-    "JuricMA Fast.   ": round(entry.jma_fast, 2),
-    "JuricMA Slow.   ": round(entry.jma_slow, 2),
-    "RSI             ": round(entry.rsi, 2),
-    "ADX             ": round(entry.adx, 2),
-    "DI+             ": round(entry.di_plus, 2),
-    "WaveTrend 1     ": round(entry.wt1, 2),
-    "WaveTrend 2     ": round(entry.wt2, 2),
-    "SqueezeMomentum ": round(entry.momentum, 2),
-}
+indicator_metrics = [
+    (f"EMA{ema_fast}", round(entry.ema_fast, 2), round(entry.ema_fast - signal.ema_fast, 2)),
+    (f"EMA{ema_slow}", round(entry.ema_slow, 2), round(entry.ema_slow - signal.ema_slow, 2)),
+    ("JMA Fast", round(entry.jma_fast, 2), round(entry.jma_fast - signal.jma_fast, 2)),
+    ("JMA Slow", round(entry.jma_slow, 2), round(entry.jma_slow - signal.jma_slow, 2)),
+    ("RSI", round(entry.rsi, 2), round(entry.rsi - signal.rsi, 2)),
+    ("ADX", round(entry.adx, 2), round(entry.adx - signal.adx, 2)),
+    ("DI+", round(entry.di_plus, 2), round(entry.di_plus - signal.di_plus, 2)),
+    ("WaveTrend 1", round(entry.wt1, 2), round(entry.wt1 - signal.wt1, 2)),
+    ("WaveTrend 2", round(entry.wt2, 2), round(entry.wt2 - signal.wt2, 2)),
+    ("Momentum", round(entry.momentum, 2), round(entry.momentum - signal.momentum, 2)),
+]
 
-st.json(vals)
+metric_cols = st.columns(4)
+for idx, (label, value, delta) in enumerate(indicator_metrics):
+    metric_cols[idx % 4].metric(label, value, delta)
 
 # ================= TRADE LOG =================
 
