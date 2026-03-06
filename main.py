@@ -684,6 +684,6 @@ if state.trades:
     tdf = pd.DataFrame(state.trades)
     tdf = tdf.fillna("")
 
-    st.dataframe(tdf, use_container_width=True)
+    st.dataframe(tdf, width="stretch")
 
     st.download_button("Download", tdf.to_csv(index=False), "trades.csv")
