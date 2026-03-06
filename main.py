@@ -129,7 +129,7 @@ def safe_call(func):
 @st.cache_data(ttl=86400)
 def load_instruments():
     inst = safe_call(lambda: pd.DataFrame(kite.instruments("NFO")))
-    return inst[(inst.name == "NIFTY") & (inst.segment == "NFO-OPT")]
+    return inst[(inst.name.str.contains("NIFTY")) & (inst.segment == "NFO-OPT")]
 
 def get_quote():
     data = safe_call(lambda: kite.quote(["NSE:NIFTY 50"]))
