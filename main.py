@@ -643,7 +643,7 @@ conditions = [
     signal.rsi < state.settings["rsi_threshold"] and entry.rsi > state.settings["rsi_threshold"],
     entry.di_plus > state.settings["di_plus_threshold"],
     entry.adx > state.settings["adx_threshold"] and entry.adx > signal.adx,
-    signal.sqz_on and entry.sqz_off and entry.momentum > 0,
+    (entry.sqz_off or signal.sqz_on) and entry.momentum > 0,
     signal.wt1 < signal.wt2 and entry.wt1 > entry.wt2
 ]
 
