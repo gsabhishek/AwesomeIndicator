@@ -119,6 +119,22 @@ def save_settings(settings):
 
 state = st.session_state
 
+defaults = {
+    "access_token": None,
+    "df": None,
+    "last_candle": None,
+    "trades": [],
+    "token": None,
+    "initialized": True,
+    "last_trade_candle": None,
+    "compute_params": {},
+    "option_type": None
+}
+
+for k, v in defaults.items():
+    if k not in state:
+        state[k] = v
+
 if "initialized" not in state:
     state.access_token = None
     state.df = None
