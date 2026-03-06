@@ -244,15 +244,58 @@ def wavetrend(df):
     return wt1, wt2
 
 
-def squeeze_momentum(df):
+def squeeze_momentum(df, length=20, mult=2.0, lengthKC=20, multKC=1.5):
 
-    m_avg = df["close"].rolling(20).mean()
+    close = df["close"]
+    high = df["high"]
+    low = df["low"]
 
-    momentum = df["close"] - m_avg
+    # ---------------- Bollinger Bands ----------------
+    basis = close.rolling(length).mean()
+    dev = close.rolling(length).std() * mult
 
-    squeeze_on = False
+    upperBB = basis + dev
+    lowerBB = basis - dev
 
-    return squeeze_on, momentum
+    # ---------------- Keltner Channel ----------------
+    maKC = close.rolling(lengthKC).mean()
+
+    tr = pd.concat([
+        high - low,
+        (high - close.shift()).abs(),
+        (low - close.shift()).abs()
+    ], axis=1).max(axis=1)
+
+    rangeKC = tr
+    rangema = rangeKC.rolling(lengthKC).mean()
+
+    upperKC = maKC + rangema * multKC
+    lowerKC = maKC - rangema * multKC
+
+    # ---------------- Squeeze Conditions ----------------
+    sqz_on = (lowerBB > lowerKC) & (upperBB < upperKC)
+    sqz_off = (lowerBB < lowerKC) & (upperBB > upperKC)
+
+    # ---------------- Momentum Calculation ----------------
+    highest_high = high.rolling(lengthKC).max()
+    lowest_low = low.rolling(lengthKC).min()
+
+    avg_price = (highest_high + lowest_low) / 2
+    mid = (avg_price + close.rolling(lengthKC).mean()) / 2
+
+    val = close - mid
+
+    x = pd.Series(range(lengthKC))
+
+    def linreg_slope(y):
+        return pd.Series(y).cov(x) / x.var()
+
+    momentum = val.rolling(lengthKC).apply(linreg_slope, raw=False)
+    
+    df["sqz_on"] = sqz_on
+    df["sqz_off"] = sqz_off
+
+    return sqz_on, momentum
 
 
 class StrategyLogic:
@@ -270,8 +313,18 @@ class StrategyLogic:
 
         df["sqz_on"], df["momentum"] = squeeze_momentum(df)
 
-        df["ema_fast"] = df["close"].ewm(span=ema_fast).mean()
-        df["ema_slow"] = df["close"].ewm(span=ema_slow).mean()
+        df["ema_fast"] = df["close"].ewm(span=ema_fast, adjust=False).mean()
+        df["ema_slow"] = df["close"].ewm(span=ema_slow, adjust=False).mean()
+        # Detect crossover
+        df["ema_cross_up"] = (
+            (df["ema_fast"] > df["ema_slow"]) &
+            (df["ema_fast"].shift(1) <= df["ema_slow"].shift(1))
+        )
+
+        df["ema_cross_down"] = (
+            (df["ema_fast"] < df["ema_slow"]) &
+            (df["ema_fast"].shift(1) >= df["ema_slow"].shift(1))
+        )
 
         df["rsi"] = ta.momentum.RSIIndicator(df["close"], window=rsi_window).rsi()
 
@@ -288,7 +341,7 @@ class StrategyLogic:
 
 # ================= OPTION SELECT =================
 
-def get_option(option_type):
+def get_option():
 
     if "nifty_options" not in state:
         state.nifty_options = load_instruments()
@@ -412,7 +465,7 @@ if state.option_type != option_type:
     state.last_candle = None
     state.option_type = option_type
 
-opt = get_option(option_type)
+opt = get_option()
 
 token = opt.instrument_token
 symbol = opt.tradingsymbol
@@ -575,12 +628,12 @@ entry = df.iloc[-1]
 conditions = [
 
     entry.close > entry.ma_chan_high,
-    signal.ema_fast < signal.ema_slow and entry.ema_fast > entry.ema_slow,
+    entry.ema_cross_up,
     entry.jma_fast > entry.jma_slow,
     signal.rsi < state.settings["rsi_threshold"] and entry.rsi > state.settings["rsi_threshold"],
     entry.di_plus > state.settings["di_plus_threshold"],
     entry.adx > state.settings["adx_threshold"] and entry.adx > signal.adx,
-    entry.momentum > 0,
+    signal.sqz_on and entry.sqz_off and entry.momentum > 0,
     signal.wt1 < signal.wt2 and entry.wt1 > entry.wt2
 ]
 
@@ -602,7 +655,7 @@ rules = [
     f"RSI crossed above {state.settings['rsi_threshold']}",
     f"DI+ > {state.settings['di_plus_threshold']}",
     f"ADX > {state.settings['adx_threshold']} & rising",
-    "Momentum > 0",
+    "Squeeze release + Momentum > 0",
     "WT1 crossed above WT2",
 ]
 
