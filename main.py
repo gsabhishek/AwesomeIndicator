@@ -89,7 +89,7 @@ kite = KiteConnect(api_key=API_KEY)
 
 import json
 
-SETTINGS_FILE = "data/settings.json"
+SETTINGS_FILE = "settings.json"
 
 DEFAULT_SETTINGS = {
     "ema_fast": 9,
