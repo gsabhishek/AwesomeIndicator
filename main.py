@@ -331,7 +331,7 @@ st.write("Selected Option:", symbol)
 price = get_quote()
 
 # ================= SIDEBAR PARAMETERS =================
-with st.sidebar.expander("⚙️ Strategy Parameters", expanded=False):
+with st.sidebar.expander("⚙️ Strategy Parameters", expanded=True):
     ema_fast = st.number_input("EMA Fast Period", min_value=2, max_value=50, step=1, value=state.settings["ema_fast"])
     ema_slow = st.number_input("EMA Slow Period", min_value=2, max_value=200, step=1, value=state.settings["ema_slow"])
     jma_fast_len = st.number_input("JMA Fast Length", min_value=2, max_value=50, step=1, value=state.settings["jma_fast_len"])
