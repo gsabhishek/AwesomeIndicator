@@ -301,7 +301,7 @@ def get_option(option_type):
 
     expiry = sorted(inst.expiry.unique())[0]
 
-    inst_type = "CE" if option_type == "CALL" else "PE"
+    inst_type = "CE" if state.option_type == "CALL" else "PE"
 
     ce_options = inst[
         (inst.expiry == expiry) &
