@@ -417,6 +417,7 @@ new_settings = {
 }
 
 if new_settings != state.settings:
+    logging.info("Settings changed, saving...")
     save_settings(new_settings)
     state.settings = new_settings
 
