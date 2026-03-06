@@ -285,12 +285,22 @@ def squeeze_momentum(df, length=20, mult=2.0, lengthKC=20, multKC=1.5):
 
     val = close - mid
 
-    x = pd.Series(range(lengthKC))
+    # TradingView-style linear regression
+    def linreg(series, length):
+        x = pd.Series(range(length))
+        x_mean = x.mean()
+        denom = ((x - x_mean) ** 2).sum()
 
-    def linreg_slope(y):
-        return pd.Series(y).cov(x) / x.var()
+        def calc(y):
+            y = pd.Series(y)
+            y_mean = y.mean()
+            slope = ((x - x_mean) * (y - y_mean)).sum() / denom
+            intercept = y_mean - slope * x_mean
+            return intercept + slope * (length - 1)
 
-    momentum = val.rolling(lengthKC).apply(linreg_slope, raw=False)
+        return series.rolling(length).apply(calc, raw=False)
+
+    momentum = linreg(val, lengthKC)
     
     df["sqz_on"] = sqz_on
     df["sqz_off"] = sqz_off
