@@ -128,7 +128,7 @@ defaults = {
     "initialized": True,
     "last_trade_candle": None,
     "compute_params": {},
-    "option_type": None
+    "option_type": "CALL"
 }
 
 for k, v in defaults.items():
@@ -144,7 +144,7 @@ if "initialized" not in state:
     state.initialized = True
     state.last_trade_candle = None
     state.compute_params = {}
-    state.option_type = None
+    state.option_type = "CALL"
 
 if "settings" not in state:
     state.settings = load_settings()
