@@ -706,7 +706,7 @@ for i, r in enumerate(conditions):
     if i == 0:  # MA Channel
         col_c.write(f"Price: {entry.close:.1f} / MA High: {entry.ma_chan_high:.1f}")
     elif i == 1:  # EMA Cross
-        col_c.write(f"EMA{state.settings['ema_fast']}: {entry.ema_fast:.0f} / EMA{state.settings['ema_slow']}: {entry.ema_slow:.0f}")
+        col_c.write(f"EMA{state.settings['ema_fast']}: {entry.ema_fast:.0f} / EMA{state.settings['ema_slow']}: {entry.ema_slow:.0f} / Spread: {entry.ema_fast - entry.ema_slow:.1f}")
     elif i == 2:  # Jurik Trend
         col_c.write(f"JMAf: {entry.jma_fast:.1f} / JMAs: {entry.jma_slow:.1f}")
     elif i == 3:  # RSI Cross
