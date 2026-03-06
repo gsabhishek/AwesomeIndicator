@@ -638,24 +638,31 @@ entry = df.iloc[-1]
 conditions = [
 
     entry.close > entry.ma_chan_high,
-    entry.ema_fast > entry.ema_slow and signal.ema_fast > signal.ema_slow,
+
+    entry.ema_fast > entry.ema_slow and (entry.ema_fast - entry.ema_slow) > 0.002 * entry.close,
+
     entry.jma_fast > entry.jma_slow,
-    signal.rsi < state.settings["rsi_threshold"] and entry.rsi > state.settings["rsi_threshold"],
+
+    entry.rsi > state.settings["rsi_threshold"],
+
     entry.di_plus > state.settings["di_plus_threshold"],
-    entry.adx > state.settings["adx_threshold"] and entry.adx > signal.adx,
-    (entry.sqz_off or signal.sqz_on) and entry.momentum > 0,
-    signal.wt1 < signal.wt2 and entry.wt1 > entry.wt2
+
+    entry.adx > state.settings["adx_threshold"] and entry.di_plus > entry.di_minus,
+
+    entry.momentum > 0,
+
+    entry.wt1 > entry.wt2
 ]
 
 names = [
-    "MA Channel",
-    "EMA9 > EMA21",
+    "MA Channel Breakout",
+    "EMA Trend",
     "Jurik Trend",
-    "RSI Cross",
+    "RSI Strength",
     "DMI Strength",
-    "ADX Trend",
-    "Squeeze Momentum",
-    "WaveTrend Cross"
+    "ADX Trend Strength",
+    "Momentum Expansion",
+    "WaveTrend Bullish"
 ]
 
 rules = [
