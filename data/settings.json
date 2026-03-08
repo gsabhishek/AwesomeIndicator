@@ -1,1 +1,20 @@
-{"ema_fast": 9, "ema_slow": 21, "jma_fast_len": 8, "jma_slow_len": 12, "rsi_window": 7, "rsi_threshold": 50, "adx_threshold": 80, "di_plus_threshold": 20, "ma_chan_window": 10}
+{
+  "ema_fast": 9,
+  "ema_slow": 21,
+  "jma_window": 8,
+  "jma_phase": 50,
+  "jma_power": 1,
+  "rsi_window": 7,
+  "rsi_threshold": 50,
+  "adx_window": 14,
+  "adx_threshold": 80,
+  "di_plus_threshold": 20,
+  "ma_chan_upper_window": 20,
+  "ma_chan_lower_window": 20,
+  "bb_length": 20,
+  "bb_mult": 2.0,
+  "kc_length": 20,
+  "kc_mult": 1.5,
+  "wt_channel_length": 10,
+  "wt_average_length": 21
+}
