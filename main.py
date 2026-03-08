@@ -27,14 +27,15 @@ def load_file_from_github(repo_path, local_file):
         r = requests.get(url, headers={"Authorization": f"token {token}"})
         if r.status_code == 200:
             content = base64.b64decode(r.json()["content"])
-            os.makedirs(os.path.dirname(local_file), exist_ok=True)
+            parent = os.path.dirname(local_file)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
             with open(local_file, "wb") as f:
                 f.write(content)
             return True
     except Exception as e:
         logging.error(f"GitHub load failed: {e}")
     return False
-
 
 def save_file_to_github(local_file, repo_path):
     try:
