@@ -406,7 +406,7 @@ def fetch_latest_candle(token):
 def load_data(token, **kwargs):
     data = safe_call(lambda: kite.historical_data(
         token,
-        datetime.now(IST) - timedelta(days=1),
+        datetime.now(IST) - timedelta(days=3),
         datetime.now(IST),
         "minute",
     ))
