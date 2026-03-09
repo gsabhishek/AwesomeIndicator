@@ -315,10 +315,15 @@ class StrategyLogic:
         df["rsi"] = ta.momentum.RSIIndicator(df["close"], window=rsi_window).rsi()
 
         # ADX / DMI
-        adx_ind     = ta.trend.ADXIndicator(df["high"], df["low"], df["close"], window=adx_window)
-        df["adx"]      = adx_ind.adx()
-        df["di_plus"]  = adx_ind.adx_pos()
-        df["di_minus"] = adx_ind.adx_neg()
+        if len(df) >= adx_window * 2:
+            adx_ind = ta.trend.ADXIndicator(df["high"], df["low"], df["close"], window=adx_window)
+            df["adx"] = adx_ind.adx()
+            df["di_plus"] = adx_ind.adx_pos()
+            df["di_minus"] = adx_ind.adx_neg()
+        else:
+            df["adx"] = np.nan
+            df["di_plus"] = np.nan
+            df["di_minus"] = np.nan
 
         # Squeeze Momentum
         color_series, val_series, sqz_on = squeeze_momentum_color(
