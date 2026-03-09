@@ -294,7 +294,8 @@ class StrategyLogic:
                 wt_channel_length=10, wt_average_length=21,
                 **_):  # absorb any extra kwargs gracefully
         df = df.copy()
-
+        if len(df) < max(adx_window, rsi_window, bb_length, kc_length, wt_average_length):
+            return df
         # MA Channel
         upper_slope, lower_slope = moving_average_channel_slopes(
             df, upper_length=ma_chan_upper_window, lower_length=ma_chan_lower_window)
