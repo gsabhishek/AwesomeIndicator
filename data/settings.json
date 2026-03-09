@@ -7,7 +7,7 @@
   "rsi_window": 7,
   "rsi_threshold": 50,
   "adx_window": 14,
-  "adx_threshold": 80,
+  "adx_threshold": 20,
   "di_plus_threshold": 20,
   "ma_chan_upper_window": 20,
   "ma_chan_lower_window": 20,
