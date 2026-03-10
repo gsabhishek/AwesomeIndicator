@@ -485,9 +485,12 @@ _compute_params = {k: v for k, v in new_settings.items()}
 
 st.title("NIFTY Strategy Dashboard")
 
-option_type = st.segmented_control("Option Type", ["CALL", "PUT"], default="CALL")
+option_type = st.segmented_control("Option Type", ["CALL", "PUT"], default=state.option_type, key="option_type_control")
 
-if state.option_type != option_type:
+if option_type is None:
+    option_type = state.option_type
+
+if option_type is not None and state.option_type != option_type:
     state.df          = None
     state.token       = None
     state.last_candle = None
