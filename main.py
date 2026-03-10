@@ -294,7 +294,8 @@ class StrategyLogic:
                 wt_channel_length=10, wt_average_length=21,
                 **_):  # absorb any extra kwargs gracefully
         df = df.copy()
-
+        if len(df) < max(adx_window, rsi_window, bb_length, kc_length, wt_average_length):
+            return df
         # MA Channel
         upper_slope, lower_slope = moving_average_channel_slopes(
             df, upper_length=ma_chan_upper_window, lower_length=ma_chan_lower_window)
@@ -314,10 +315,15 @@ class StrategyLogic:
         df["rsi"] = ta.momentum.RSIIndicator(df["close"], window=rsi_window).rsi()
 
         # ADX / DMI
-        adx_ind     = ta.trend.ADXIndicator(df["high"], df["low"], df["close"], window=adx_window)
-        df["adx"]      = adx_ind.adx()
-        df["di_plus"]  = adx_ind.adx_pos()
-        df["di_minus"] = adx_ind.adx_neg()
+        if len(df) >= adx_window * 2:
+            adx_ind = ta.trend.ADXIndicator(df["high"], df["low"], df["close"], window=adx_window)
+            df["adx"] = adx_ind.adx()
+            df["di_plus"] = adx_ind.adx_pos()
+            df["di_minus"] = adx_ind.adx_neg()
+        else:
+            df["adx"] = np.nan
+            df["di_plus"] = np.nan
+            df["di_minus"] = np.nan
 
         # Squeeze Momentum
         color_series, val_series, sqz_on = squeeze_momentum_color(
@@ -400,7 +406,7 @@ def fetch_latest_candle(token):
 def load_data(token, **kwargs):
     data = safe_call(lambda: kite.historical_data(
         token,
-        datetime.now(IST) - timedelta(days=1),
+        datetime.now(IST) - timedelta(days=3),
         datetime.now(IST),
         "minute",
     ))
